@@ -1,36 +1,46 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Chat-in-go
 
-## Getting Started
+People join a page from a link or QR code and can message it right away.
 
-First, run the development server:
+## Setup
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+1. Create a project at [supabase.com](https://supabase.com).
+2. Open **SQL Editor**, paste `supabase/schema.sql`, and run it.
+3. In **Project Settings → API**, copy the project URL, **publishable** key (this used to be called the anon key), and **secret** key (this used to be called the service role key).
+4. Copy `.env.example` to `.env.local` and fill in:
+
+```
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+ADMIN_EMAIL=
+ADMIN_PASSWORD=
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Paste the publishable key into `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Paste the secret key into `SUPABASE_SERVICE_ROLE_KEY`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+`ADMIN_EMAIL` and `ADMIN_PASSWORD` are only for you. They are not stored in the database.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Email confirmation can stay off in Supabase Auth. Sign-up confirms users in code.
 
-## Learn More
+To enable **Continue with Google**:
 
-To learn more about Next.js, take a look at the following resources:
+1. In Google Cloud, create an OAuth client of type **Web application**.
+2. Add authorized JavaScript origin `http://localhost:3000` (and your live origin later).
+3. Add authorized redirect URI `https://YOUR_PROJECT_REF.supabase.co/auth/v1/callback`.
+4. In Supabase **Authentication → Providers → Google**, paste the client ID and secret and turn the provider on.
+5. In **Authentication → URL Configuration**, set the site URL to `http://localhost:3000` and add `http://localhost:3000/auth/callback` to the redirect allow list.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm install
+npm run dev
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Users sign in or sign up at [http://localhost:3000](http://localhost:3000).
+- Admin sign-in is at `/admin`. That page is not linked from the public screen.
 
-## Deploy on Vercel
+After someone has a user account, grant them access to a page by entering their email on that page. They can reply there. They cannot create pages.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+If the app was set up before profile photos, run `supabase/avatar.sql` in the SQL editor so users can add a photo.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Visitors can still join a page from its link or QR code without an account.
