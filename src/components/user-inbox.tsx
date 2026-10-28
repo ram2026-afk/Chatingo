@@ -10,12 +10,13 @@ import {
   ChatFrame,
   ConversationItem,
   EmptyThread,
+  JoinPendingNotice,
   ThreadHeader,
 } from "@/components/messenger";
 import { TopBar } from "@/components/top-bar";
 import { useChatThread } from "@/components/use-chat-thread";
 import { useOrigin } from "@/components/use-origin";
-import { api, isForbidden, isUnauthorized } from "@/lib/http";
+import { api, isForbidden, isNotFound, isUnauthorized } from "@/lib/http";
 import { cleanReferralCode, readClientReferral } from "@/lib/referral";
 import type { JoinResult, SessionInfo, UserChatSummary } from "@/lib/types";
 
@@ -132,6 +133,12 @@ export function UserInbox() {
     onLiveError: (caught) => {
       if (isUnauthorized(caught)) router.replace("/login");
       if (isForbidden(caught)) router.replace("/pages");
+      if (isNotFound(caught)) {
+        listOnly.current = true;
+        setSelectedId("");
+        setThread(null);
+        router.replace("/inbox");
+      }
     },
   });
 
@@ -334,15 +341,18 @@ export function UserInbox() {
                       imageUrl={chat.pageImageUrl}
                       kind="page"
                       preview={
-                        chat.lastMessage
-                          ? chat.lastMessage.body
-                          : "Joined, no message yet"
+                        chat.joinStatus === "pending"
+                          ? "Request pending"
+                          : chat.lastMessage
+                            ? chat.lastMessage.body
+                            : "Joined, no message yet"
                       }
                       time={chat.updatedAt}
                       selected={chat.conversationId === activeId}
                       unreadCount={
                         chat.conversationId === activeId ? 0 : chat.unreadCount
                       }
+                      pending={chat.joinStatus === "pending"}
                       onClick={() => openConversation(chat.conversationId)}
                     />
                   ))
@@ -359,7 +369,11 @@ export function UserInbox() {
                   name={thread.conversation.pageName}
                   imageUrl={thread.conversation.pageImageUrl}
                   kind="page"
-                  subtitle={`Joined as ${thread.conversation.visitorName}`}
+                  subtitle={
+                    thread.conversation.joinStatus === "pending"
+                      ? "Request pending"
+                      : `Joined as ${thread.conversation.visitorName}`
+                  }
                   onBack={() => {
                     listOnly.current = true;
                     setSelectedId("");
@@ -376,35 +390,54 @@ export function UserInbox() {
                   pageReadAt={thread.conversation.pageReadAt}
                   visitorReadAt={thread.conversation.visitorReadAt}
                   empty={
-                    thread.conversation.welcome ||
-                    "You're in. Send a message whenever you're ready."
+                    thread.conversation.joinStatus === "pending"
+                      ? "Your request is pending. You can chat once this page accepts you."
+                      : thread.conversation.welcome ||
+                        "You're in. Send a message whenever you're ready."
                   }
-                  retention={thread.retention}
-                  onReply={setReplyTo}
-                  onAct={act}
+                  retention={
+                    thread.conversation.joinStatus === "pending"
+                      ? null
+                      : thread.retention
+                  }
+                  onReply={
+                    thread.conversation.joinStatus === "pending"
+                      ? undefined
+                      : setReplyTo
+                  }
+                  onAct={
+                    thread.conversation.joinStatus === "pending" ? undefined : act
+                  }
                 />
                 {sendError ? (
                   <div className="bg-card px-3 pb-1 sm:px-4">
                     <Alert>{sendError}</Alert>
                   </div>
                 ) : null}
-                <Composer
-                  placeholder={`Message ${thread.conversation.pageName}`}
-                  replyTo={replyTo}
-                  replyName={
-                    replyTo
-                      ? replyTo.sender === "visitor"
-                        ? "You"
-                        : thread.conversation.pageName
-                      : undefined
-                  }
-                  onCancelReply={() => setReplyTo(null)}
-                  onError={setSendError}
-                  onSend={async (payload) => {
-                    setSendError("");
-                    await send(payload);
-                  }}
-                />
+                {thread.conversation.joinStatus === "pending" ? (
+                  <JoinPendingNotice
+                    title="Request pending"
+                    body={`You can chat with ${thread.conversation.pageName} once they accept your request.`}
+                  />
+                ) : (
+                  <Composer
+                    placeholder={`Message ${thread.conversation.pageName}`}
+                    replyTo={replyTo}
+                    replyName={
+                      replyTo
+                        ? replyTo.sender === "visitor"
+                          ? "You"
+                          : thread.conversation.pageName
+                        : undefined
+                    }
+                    onCancelReply={() => setReplyTo(null)}
+                    onError={setSendError}
+                    onSend={async (payload) => {
+                      setSendError("");
+                      await send(payload);
+                    }}
+                  />
+                )}
               </>
             ) : (
               <EmptyThread

@@ -33,10 +33,18 @@ create table if not exists public.conversations (
   visitor_token text not null unique,
   user_id uuid references public.profiles (id) on delete set null,
   referred_by uuid references public.profiles (id) on delete set null,
+  status text not null default 'accepted' check (status in ('pending', 'accepted')),
   admin_read_at timestamptz,
   user_read_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+create table if not exists public.page_blocks (
+  page_id uuid not null references public.pages (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (page_id, user_id)
 );
 
 create table if not exists public.messages (
@@ -74,12 +82,16 @@ create unique index if not exists conversations_page_user_idx
 create index if not exists page_access_user_idx
   on public.page_access (user_id);
 
+create index if not exists page_blocks_user_idx
+  on public.page_blocks (user_id);
+
 create index if not exists sessions_expires_idx
   on public.sessions (expires_at);
 
 alter table public.profiles enable row level security;
 alter table public.pages enable row level security;
 alter table public.page_access enable row level security;
+alter table public.page_blocks enable row level security;
 alter table public.conversations enable row level security;
 alter table public.messages enable row level security;
 alter table public.sessions enable row level security;
@@ -87,6 +99,7 @@ alter table public.sessions enable row level security;
 revoke all on table public.profiles from anon, authenticated;
 revoke all on table public.pages from anon, authenticated;
 revoke all on table public.page_access from anon, authenticated;
+revoke all on table public.page_blocks from anon, authenticated;
 revoke all on table public.conversations from anon, authenticated;
 revoke all on table public.messages from anon, authenticated;
 revoke all on table public.sessions from anon, authenticated;

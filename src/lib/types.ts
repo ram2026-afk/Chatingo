@@ -1,5 +1,7 @@
 export type ChatActor = "visitor" | "page";
 
+export type JoinStatus = "pending" | "accepted";
+
 export type PublicPage = {
   name: string;
   slug: string;
@@ -19,8 +21,10 @@ export type PageSummary = PublicPage & {
 export type ConversationSummary = {
   id: string;
   visitorName: string;
+  visitorImageUrl: string | null;
   updatedAt: string;
   unreadCount: number;
+  joinStatus: JoinStatus;
   lastMessage: {
     body: string;
     sender: ChatActor;
@@ -91,6 +95,7 @@ export type Thread = {
     visitorReadAt: string | null;
     welcome: string;
     referredByName: string | null;
+    joinStatus: JoinStatus;
   };
   messages: ChatMessage[];
   retention?: RetentionNotice | null;
@@ -98,6 +103,7 @@ export type Thread = {
 
 export type JoinResult = {
   conversationId: string;
+  joinStatus: JoinStatus;
 };
 
 export type SessionInfo = {
@@ -127,6 +133,7 @@ export type UserChatSummary = {
   pageImageUrl: string | null;
   updatedAt: string;
   unreadCount: number;
+  joinStatus: JoinStatus;
   lastMessage: {
     body: string;
     sender: ChatActor;

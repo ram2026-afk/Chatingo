@@ -24,6 +24,7 @@ import type {
   ChatAction,
   ChatActor,
   ChatMessage,
+  JoinStatus,
   PageActor,
   PublicPage,
   SessionInfo,
@@ -54,6 +55,7 @@ type ConversationRow = {
   visitor_token: string;
   user_id: string | null;
   referred_by?: string | null;
+  status?: JoinStatus | null;
   admin_read_at: string | null;
   user_read_at: string | null;
   created_at: string;
@@ -309,6 +311,98 @@ function missingReferralColumn(error: { message?: string; code?: string } | null
   );
 }
 
+function missingBlocksTable(error: { message?: string; code?: string } | null) {
+  const text = `${error?.code ?? ""} ${error?.message ?? ""}`.toLowerCase();
+  return text.includes("page_blocks");
+}
+
+function missingStatusColumn(error: { message?: string; code?: string } | null) {
+  const text = `${error?.code ?? ""} ${error?.message ?? ""}`.toLowerCase();
+  return text.includes("status") && (text.includes("column") || text.includes("schema cache"));
+}
+
+export const PENDING_JOIN_MESSAGE =
+  "Your request is pending. You can chat once the page accepts you.";
+
+function pendingPath(pageId: string, userId: string) {
+  return `pending/${pageId}/${userId}`;
+}
+
+async function resolveJoinStatus(conversation: ConversationRow): Promise<JoinStatus> {
+  return (await isJoinPending(conversation)) ? "pending" : "accepted";
+}
+
+async function isJoinPending(conversation: ConversationRow) {
+  if (conversation.status === "pending") return true;
+  if (!conversation.user_id) return false;
+  const { data } = await db()
+    .storage.from("avatars")
+    .download(pendingPath(conversation.page_id, conversation.user_id));
+  return Boolean(data);
+}
+
+const PENDING_MARK = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+async function markJoinPending(pageId: string, userId: string) {
+  const { error } = await db()
+    .storage.from("avatars")
+    .upload(pendingPath(pageId, userId), PENDING_MARK, {
+      contentType: "image/png",
+      upsert: true,
+    });
+  if (error) {
+    console.error(error);
+    return false;
+  }
+  return true;
+}
+
+async function clearJoinPending(pageId: string, userId: string) {
+  const { error } = await db()
+    .storage.from("avatars")
+    .remove([pendingPath(pageId, userId)]);
+  if (error) console.error(error);
+}
+
+export const BLOCKED_PAGE_MESSAGE = "You can no longer message this page.";
+
+function blockPath(pageId: string, userId: string) {
+  return `blocks/${pageId}/${userId}`;
+}
+
+async function isUserBlockedFromPage(pageId: string, userId: string) {
+  const { data, error } = await db()
+    .from("page_blocks")
+    .select("user_id")
+    .eq("page_id", pageId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!error && data) return true;
+  if (error && !missingBlocksTable(error)) throwIf(error);
+  const { data: file } = await db()
+    .storage.from("avatars")
+    .download(blockPath(pageId, userId));
+  return Boolean(file);
+}
+
+async function blockUserFromPage(pageId: string, userId: string) {
+  const { error } = await db().from("page_blocks").upsert(
+    { page_id: pageId, user_id: userId },
+    { onConflict: "page_id,user_id" },
+  );
+  if (error && !missingBlocksTable(error)) throwIf(error);
+  const { error: uploadError } = await db()
+    .storage.from("avatars")
+    .upload(blockPath(pageId, userId), Buffer.from("blocked"), {
+      contentType: "text/plain",
+      upsert: true,
+    });
+  if (uploadError) console.error(uploadError);
+}
+
 export async function ensureReferralCode(userId: string) {
   await connection();
   const profile = await getProfile(userId);
@@ -469,6 +563,24 @@ async function resolveProfileImage(profile: ProfileRow) {
   return `${published.publicUrl}?v=${file.updated_at ?? Date.now()}`;
 }
 
+async function visitorImageMap(conversations: ConversationRow[]) {
+  const ids = [
+    ...new Set(
+      conversations
+        .map((conversation) => conversation.user_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const images = new Map<string, string | null>();
+  await Promise.all(
+    ids.map(async (id) => {
+      const profile = await getProfile(id);
+      images.set(id, profile ? await resolveProfileImage(profile) : null);
+    }),
+  );
+  return images;
+}
+
 async function ensureProfile(user: {
   id: string;
   email?: string | null;
@@ -497,8 +609,11 @@ async function ensureProfile(user: {
   return (withImage as ProfileRow | null) ?? created;
 }
 
-function conversationResult(conversation: ConversationRow) {
-  return { conversationId: conversation.id };
+async function conversationResult(conversation: ConversationRow) {
+  return {
+    conversationId: conversation.id,
+    joinStatus: await resolveJoinStatus(conversation),
+  };
 }
 
 async function lastMessages(conversationIds: string[]) {
@@ -517,6 +632,7 @@ async function lastMessages(conversationIds: string[]) {
 }
 
 async function unreadVisitorCount(conversation: ConversationRow) {
+  if (await isJoinPending(conversation)) return 1;
   let query = db()
     .from("messages")
     .select("*", { count: "exact", head: true })
@@ -1039,13 +1155,19 @@ export async function listPages(actor: PageActor) {
         .filter((message): message is MessageRow => Boolean(message))
         .sort((a, b) => a.created_at.localeCompare(b.created_at))
         .at(-1);
+      const pendingFlags = await Promise.all(list.map(isJoinPending));
+      const hasPending = pendingFlags.some(Boolean);
       return {
         ...(await publicPageWithImage(page, images)),
         id: page.id,
         createdAt: page.created_at,
         conversationCount: list.length,
         lastActivityAt,
-        lastPreview: latestMessage ? messagePreview(latestMessage) : null,
+        lastPreview: hasPending
+          ? "Wants to join"
+          : latestMessage
+            ? messagePreview(latestMessage)
+            : null,
         unreadCount: unreadCounts.reduce((total, count) => total + count, 0),
       };
     }),
@@ -1065,15 +1187,30 @@ export async function getPageDetail(id: string, actor: PageActor) {
   throwIf(error);
   const list = (conversations ?? []) as ConversationRow[];
   const last = await lastMessages(list.map((item) => item.id));
+  const visitorImages = await visitorImageMap(list);
   const details = await Promise.all(
     list.map(async (conversation) => {
       const message = last.get(conversation.id);
+      const joinStatus = await resolveJoinStatus(conversation);
       return {
         id: conversation.id,
         visitorName: conversation.visitor_name,
+        visitorImageUrl: conversation.user_id
+          ? visitorImages.get(conversation.user_id) ?? null
+          : null,
         updatedAt: conversation.updated_at,
         unreadCount: await unreadVisitorCount(conversation),
-        lastMessage: message ? lastMessageDto(message) : null,
+        joinStatus,
+        lastMessage:
+          joinStatus === "pending"
+            ? {
+                body: "Wants to join",
+                sender: "visitor" as const,
+                createdAt: conversation.updated_at,
+              }
+            : message
+              ? lastMessageDto(message)
+              : null,
       };
     }),
   );
@@ -1083,7 +1220,11 @@ export async function getPageDetail(id: string, actor: PageActor) {
       id: page.id,
       createdAt: page.created_at,
     },
-    conversations: details,
+    conversations: details.sort((a, b) => {
+      if (a.joinStatus === "pending" && b.joinStatus !== "pending") return -1;
+      if (b.joinStatus === "pending" && a.joinStatus !== "pending") return 1;
+      return b.updatedAt.localeCompare(a.updatedAt);
+    }),
   };
 }
 
@@ -1151,6 +1292,9 @@ export async function joinPageAsUser(
   const page = await requirePageBySlug(slug);
   const profile = await getProfile(userId);
   if (!profile) throw new HttpError(401, "Sign in required.");
+  if (await isUserBlockedFromPage(page.id, userId)) {
+    throw new HttpError(403, BLOCKED_PAGE_MESSAGE);
+  }
   const { data: existing, error: existingError } = await db()
     .from("conversations")
     .select("*")
@@ -1166,12 +1310,25 @@ export async function joinPageAsUser(
     visitor_name: profile.name,
     visitor_token: randomBytes(32).toString("hex"),
     user_id: userId,
+    status: "pending" as const,
     created_at: now,
     updated_at: now,
     ...(referredBy ? { referred_by: referredBy } : {}),
   };
   const insert = await db().from("conversations").insert(payload).select("*").single();
   let { data, error } = insert;
+  let statusPersisted = true;
+  if (error && missingStatusColumn(error)) {
+    statusPersisted = false;
+    const { status: _status, ...withoutStatus } = payload;
+    const retry = await db()
+      .from("conversations")
+      .insert(withoutStatus)
+      .select("*")
+      .single();
+    data = retry.data;
+    error = retry.error;
+  }
   if (error && referredBy && missingReferralColumn(error)) {
     const retry = await db()
       .from("conversations")
@@ -1180,6 +1337,7 @@ export async function joinPageAsUser(
         visitor_name: payload.visitor_name,
         visitor_token: payload.visitor_token,
         user_id: payload.user_id,
+        status: payload.status,
         created_at: payload.created_at,
         updated_at: payload.updated_at,
       })
@@ -1187,6 +1345,23 @@ export async function joinPageAsUser(
       .single();
     data = retry.data;
     error = retry.error;
+    if (error && missingStatusColumn(error)) {
+      statusPersisted = false;
+      const withoutStatus = await db()
+        .from("conversations")
+        .insert({
+          page_id: payload.page_id,
+          visitor_name: payload.visitor_name,
+          visitor_token: payload.visitor_token,
+          user_id: payload.user_id,
+          created_at: payload.created_at,
+          updated_at: payload.updated_at,
+        })
+        .select("*")
+        .single();
+      data = withoutStatus.data;
+      error = withoutStatus.error;
+    }
   }
   if (error?.code === "23505") {
     const { data: again, error: againError } = await db()
@@ -1199,7 +1374,24 @@ export async function joinPageAsUser(
     if (again) return conversationResult(again as ConversationRow);
   }
   throwIf(error);
-  const created = data as ConversationRow;
+  const created = { ...(data as ConversationRow), status: "pending" as const };
+  const { error: statusError } = await db()
+    .from("conversations")
+    .update({ status: "pending" })
+    .eq("id", created.id);
+  if (statusError && missingStatusColumn(statusError)) {
+    statusPersisted = false;
+  } else if (statusError) {
+    console.error(statusError);
+    statusPersisted = false;
+  } else {
+    statusPersisted = true;
+  }
+  const marked = await markJoinPending(page.id, userId);
+  if (!statusPersisted && !marked) {
+    await db().from("conversations").delete().eq("id", created.id);
+    throw new HttpError(500, "Could not send this join request.");
+  }
   if (referredBy) {
     await saveConversationReferral(created.id, referredBy);
   }
@@ -1229,6 +1421,7 @@ export async function listUserChats(userId: string) {
       if (!page) return [];
       const message = last.get(conversation.id);
       const row = page as PageRow;
+      const joinStatus = await resolveJoinStatus(conversation);
       return [
         {
           conversationId: conversation.id,
@@ -1237,12 +1430,26 @@ export async function listUserChats(userId: string) {
           pageImageUrl: (await publicPageWithImage(row, images)).imageUrl,
           updatedAt: conversation.updated_at,
           unreadCount: await unreadPageCount(conversation),
-          lastMessage: message ? lastMessageDto(message) : null,
+          joinStatus,
+          lastMessage:
+            joinStatus === "pending"
+              ? {
+                  body: "Request pending",
+                  sender: "visitor" as const,
+                  createdAt: conversation.updated_at,
+                }
+              : message
+                ? lastMessageDto(message)
+                : null,
         },
       ];
     }),
   );
-  return chats.flat();
+  return chats.flat().sort((a, b) => {
+    if (a.joinStatus === "pending" && b.joinStatus !== "pending") return -1;
+    if (b.joinStatus === "pending" && a.joinStatus !== "pending") return 1;
+    return b.updatedAt.localeCompare(a.updatedAt);
+  });
 }
 
 async function toThread(conversation: ConversationRow) {
@@ -1279,6 +1486,7 @@ async function toThread(conversation: ConversationRow) {
       visitorReadAt: conversation.user_read_at,
       welcome: page.welcome,
       referredByName,
+      joinStatus: await resolveJoinStatus(conversation),
     },
     messages,
     retention: retentionNotice(),
@@ -1336,7 +1544,7 @@ export async function getThreadForAdmin(conversationId: string, actor: PageActor
   await connection();
   const conversation = await requireConversation(conversationId);
   await assertCanManagePage(actor, conversation.page_id);
-  await markPageRead(conversation);
+  if (!(await isJoinPending(conversation))) await markPageRead(conversation);
   return toThread(conversation);
 }
 
@@ -1346,8 +1554,47 @@ export async function getThreadForUser(conversationId: string, userId: string) {
   if (conversation.user_id !== userId) {
     throw new HttpError(403, "This conversation is not yours.");
   }
-  await markVisitorRead(conversation);
+  if (!(await isJoinPending(conversation))) await markVisitorRead(conversation);
   return toThread(conversation);
+}
+
+export async function acceptCustomer(conversationId: string, actor: PageActor) {
+  await connection();
+  const conversation = await requireConversation(conversationId);
+  await assertCanManagePage(actor, conversation.page_id);
+  const now = new Date().toISOString();
+  const { error } = await db()
+    .from("conversations")
+    .update({ status: "accepted", updated_at: now })
+    .eq("id", conversation.id);
+  if (error && !missingStatusColumn(error)) throwIf(error);
+  conversation.status = "accepted";
+  conversation.updated_at = now;
+  if (conversation.user_id) {
+    await clearJoinPending(conversation.page_id, conversation.user_id);
+  }
+  return toThread(conversation);
+}
+
+export async function removeCustomer(conversationId: string, actor: PageActor) {
+  await connection();
+  const conversation = await requireConversation(conversationId);
+  await assertCanManagePage(actor, conversation.page_id);
+  if (conversation.user_id) {
+    await blockUserFromPage(conversation.page_id, conversation.user_id);
+    await clearJoinPending(conversation.page_id, conversation.user_id);
+  }
+  const { data: messages, error: readError } = await db()
+    .from("messages")
+    .select("*")
+    .eq("conversation_id", conversation.id);
+  throwIf(readError);
+  await removeChatImages((messages ?? []) as MessageRow[]);
+  const { error } = await db()
+    .from("conversations")
+    .delete()
+    .eq("id", conversation.id);
+  throwIf(error);
 }
 
 function readReplyToId(value: unknown) {
@@ -1451,6 +1698,9 @@ export async function addUserMessage(
   if (conversation.user_id !== userId) {
     throw new HttpError(403, "This conversation is not yours.");
   }
+  if (await isJoinPending(conversation)) {
+    throw new HttpError(403, PENDING_JOIN_MESSAGE);
+  }
   return appendMessage(
     conversation,
     "visitor",
@@ -1471,6 +1721,9 @@ export async function addPageMessage(
   const body = cleanMessage(bodyInput, Boolean(image));
   const conversation = await requireConversation(conversationId);
   await assertCanManagePage(actor, conversation.page_id);
+  if (await isJoinPending(conversation)) {
+    throw new HttpError(403, "Accept this request before chatting.");
+  }
   return appendMessage(
     conversation,
     "page",

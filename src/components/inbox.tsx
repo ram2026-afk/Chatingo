@@ -12,13 +12,14 @@ import {
   ChatFrame,
   ConversationItem,
   EmptyThread,
+  JoinPendingNotice,
   ThreadHeader,
 } from "@/components/messenger";
 import { QrCode } from "@/components/qr-code";
 import { useOrigin } from "@/components/use-origin";
 import { useChatThread } from "@/components/use-chat-thread";
-import { api, isForbidden, isUnauthorized } from "@/lib/http";
-import type { PageDetail, SessionInfo } from "@/lib/types";
+import { api, isForbidden, isNotFound, isUnauthorized } from "@/lib/http";
+import type { PageDetail, SessionInfo, Thread } from "@/lib/types";
 
 export function Inbox() {
   const params = useParams<{ id: string }>();
@@ -43,6 +44,8 @@ function InboxView({ id }: { id: string }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [removingCustomer, setRemovingCustomer] = useState(false);
+  const [accepting, setAccepting] = useState(false);
   const listOnly = useRef(false);
   const photoRef = useRef<HTMLInputElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
@@ -147,6 +150,11 @@ function InboxView({ id }: { id: string }) {
     onLiveError: (caught) => {
       if (isUnauthorized(caught)) router.replace("/login");
       if (isForbidden(caught)) router.replace("/pages");
+      if (isNotFound(caught)) {
+        listOnly.current = true;
+        setActiveId("");
+        setThread(null);
+      }
     },
   });
 
@@ -247,6 +255,87 @@ function InboxView({ id }: { id: string }) {
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       setError("Could not copy the link.");
+    }
+  }
+
+  async function removeCustomer() {
+    if (!activeId) return;
+    setError("");
+    setRemovingCustomer(true);
+    try {
+      const removedId = activeId;
+      await api(`/api/conversations/${removedId}`, { method: "DELETE" });
+      listOnly.current = true;
+      setActiveId("");
+      setThread(null);
+      setReplyTo(null);
+      setDetail((current) =>
+        current
+          ? {
+              ...current,
+              conversations: current.conversations.filter(
+                (item) => item.id !== removedId,
+              ),
+            }
+          : current,
+      );
+    } catch (caught) {
+      if (isUnauthorized(caught)) {
+        router.replace("/login");
+        return;
+      }
+      if (isForbidden(caught)) {
+        router.replace("/pages");
+        return;
+      }
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Could not remove this customer.",
+      );
+    } finally {
+      setRemovingCustomer(false);
+    }
+  }
+
+  async function acceptCustomer() {
+    if (!activeId) return;
+    setError("");
+    setAccepting(true);
+    try {
+      const next = await api<Thread>(`/api/conversations/${activeId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ accept: true }),
+      });
+      setThread(next);
+      setDetail((current) =>
+        current
+          ? {
+              ...current,
+              conversations: current.conversations.map((item) =>
+                item.id === activeId
+                  ? { ...item, joinStatus: "accepted", unreadCount: 0 }
+                  : item,
+              ),
+            }
+          : current,
+      );
+    } catch (caught) {
+      if (isUnauthorized(caught)) {
+        router.replace("/login");
+        return;
+      }
+      if (isForbidden(caught)) {
+        router.replace("/pages");
+        return;
+      }
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Could not accept this request.",
+      );
+    } finally {
+      setAccepting(false);
     }
   }
 
@@ -581,18 +670,25 @@ function InboxView({ id }: { id: string }) {
                   <ConversationItem
                     key={conversation.id}
                     name={conversation.visitorName}
+                    imageUrl={conversation.visitorImageUrl}
+                    kind="person"
                     preview={
-                      conversation.lastMessage
-                        ? conversation.lastMessage.body
-                        : "Joined, no message yet"
+                      conversation.joinStatus === "pending"
+                        ? "Wants to join"
+                        : conversation.lastMessage
+                          ? conversation.lastMessage.body
+                          : "Joined, no message yet"
                     }
                     time={conversation.updatedAt}
                     selected={conversation.id === activeId}
                     unreadCount={
-                      conversation.id === activeId
-                        ? 0
-                        : conversation.unreadCount
+                      conversation.joinStatus === "pending"
+                        ? 1
+                        : conversation.id === activeId
+                          ? 0
+                          : conversation.unreadCount
                     }
+                    pending={conversation.joinStatus === "pending"}
                     onClick={() => openConversation(conversation.id)}
                   />
                 ))
@@ -605,11 +701,19 @@ function InboxView({ id }: { id: string }) {
             <>
               <ThreadHeader
                 name={thread.conversation.visitorName}
-                subtitle={`Messaging ${thread.conversation.pageName}`}
+                imageUrl={thread.conversation.visitorImageUrl}
+                kind="person"
+                subtitle={
+                  thread.conversation.joinStatus === "pending"
+                    ? "Wants to join this page"
+                    : `Messaging ${thread.conversation.pageName}`
+                }
                 onBack={() => {
                   listOnly.current = true;
                   setActiveId("");
                 }}
+                onRemoveCustomer={removeCustomer}
+                removingCustomer={removingCustomer}
               />
               <MessageList
                 messages={thread.messages}
@@ -620,34 +724,65 @@ function InboxView({ id }: { id: string }) {
                 visitorImageUrl={thread.conversation.visitorImageUrl}
                 pageReadAt={thread.conversation.pageReadAt}
                 visitorReadAt={thread.conversation.visitorReadAt}
-                empty="No messages yet. Reply when they write in."
-                retention={thread.retention}
+                empty={
+                  thread.conversation.joinStatus === "pending"
+                    ? `${thread.conversation.visitorName} asked to join. Accept to start chatting.`
+                    : "No messages yet. Reply when they write in."
+                }
+                retention={
+                  thread.conversation.joinStatus === "pending"
+                    ? null
+                    : thread.retention
+                }
                 referredBy={thread.conversation.referredByName}
-                onReply={setReplyTo}
-                onAct={act}
+                onReply={
+                  thread.conversation.joinStatus === "pending"
+                    ? undefined
+                    : setReplyTo
+                }
+                onAct={
+                  thread.conversation.joinStatus === "pending" ? undefined : act
+                }
               />
               {sendError ? (
                 <div className="bg-card px-3 pb-1 sm:px-4">
                   <Alert>{sendError}</Alert>
                 </div>
               ) : null}
-              <Composer
-                placeholder={`Message ${thread.conversation.visitorName}`}
-                replyTo={replyTo}
-                replyName={
-                  replyTo
-                    ? replyTo.sender === "page"
-                      ? "You"
-                      : thread.conversation.visitorName
-                    : undefined
-                }
-                onCancelReply={() => setReplyTo(null)}
-                onError={setSendError}
-                onSend={async (payload) => {
-                  setSendError("");
-                  await send(payload);
-                }}
-              />
+              {thread.conversation.joinStatus === "pending" ? (
+                <JoinPendingNotice
+                  title="Join request"
+                  body={`${thread.conversation.visitorName} wants to chat with this page.`}
+                  action={
+                    <button
+                      type="button"
+                      className="btn mt-3 w-full"
+                      disabled={accepting}
+                      onClick={() => void acceptCustomer()}
+                    >
+                      {accepting ? "Accepting" : "Accept"}
+                    </button>
+                  }
+                />
+              ) : (
+                <Composer
+                  placeholder={`Message ${thread.conversation.visitorName}`}
+                  replyTo={replyTo}
+                  replyName={
+                    replyTo
+                      ? replyTo.sender === "page"
+                        ? "You"
+                        : thread.conversation.visitorName
+                      : undefined
+                  }
+                  onCancelReply={() => setReplyTo(null)}
+                  onError={setSendError}
+                  onSend={async (payload) => {
+                    setSendError("");
+                    await send(payload);
+                  }}
+                />
+              )}
             </>
           ) : (
             <EmptyThread

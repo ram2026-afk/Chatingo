@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BackButton } from "@/components/back-button";
 import { PageAvatar } from "@/components/brand";
 import { formatChatTime } from "@/lib/time";
@@ -9,8 +10,8 @@ export function ChatFrame({
   thread,
   showThread,
 }: {
-  sidebar: React.ReactNode;
-  thread: React.ReactNode;
+  sidebar: ReactNode;
+  thread: ReactNode;
   showThread: boolean;
 }) {
   return (
@@ -51,6 +52,7 @@ export function ConversationItem({
   unreadCount = 0,
   imageUrl,
   kind = "person",
+  pending = false,
   onClick,
 }: {
   name: string;
@@ -60,6 +62,7 @@ export function ConversationItem({
   unreadCount?: number;
   imageUrl?: string | null;
   kind?: "page" | "person";
+  pending?: boolean;
   onClick: () => void;
 }) {
   const unread = unreadCount > 0;
@@ -79,13 +82,17 @@ export function ConversationItem({
         </span>
         <span
           className={`mt-0.5 block truncate text-[13px] ${
-            unread ? "font-semibold text-ink" : "text-muted"
+            pending || unread ? "font-semibold text-ink" : "text-muted"
           }`}
         >
           {preview}
         </span>
       </span>
-      <NoticeCount count={unreadCount} />
+      {pending ? (
+        <span className="pending-pill">Pending</span>
+      ) : (
+        <NoticeCount count={unreadCount} />
+      )}
     </button>
   );
 }
@@ -96,13 +103,46 @@ export function ThreadHeader({
   imageUrl,
   kind = "person",
   onBack,
+  onRemoveCustomer,
+  removingCustomer = false,
 }: {
   name: string;
   subtitle?: string;
   imageUrl?: string | null;
   kind?: "page" | "person";
   onBack?: () => void;
+  onRemoveCustomer?: () => Promise<void> | void;
+  removingCustomer?: boolean;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function closeMenu() {
+      setMenuOpen(false);
+      setConfirm(false);
+    }
+    function onPointer(event: MouseEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) closeMenu();
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") closeMenu();
+    }
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
+    setMenuOpen(false);
+    setConfirm(false);
+  }, [name]);
+
   return (
     <div className="flex min-h-14 min-w-0 shrink-0 items-center gap-2 px-2 py-2.5 sm:min-h-[68px] sm:gap-3 sm:px-4 sm:py-3">
       {onBack ? (
@@ -119,6 +159,85 @@ export function ThreadHeader({
           <p className="truncate text-xs text-muted">{subtitle}</p>
         ) : null}
       </div>
+      {onRemoveCustomer ? (
+        <div className="relative shrink-0" ref={menuRef}>
+          <button
+            type="button"
+            className="settings-btn"
+            aria-label="Chat actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={() => {
+              setMenuOpen((open) => !open);
+              setConfirm(false);
+            }}
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <circle cx="8" cy="3.2" r="1.35" />
+              <circle cx="8" cy="8" r="1.35" />
+              <circle cx="8" cy="12.8" r="1.35" />
+            </svg>
+          </button>
+          {menuOpen ? (
+            <div className="profile-panel" role="menu">
+              {confirm ? (
+                <div>
+                  <p className="text-sm font-semibold">Delete customer?</p>
+                  <p className="mt-1 text-xs leading-5 text-muted">
+                    {name} will not be able to message this page, and this chat
+                    will be removed from their inbox.
+                  </p>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      className="btn btn-secondary w-full"
+                      disabled={removingCustomer}
+                      onClick={() => setConfirm(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-danger w-full"
+                      disabled={removingCustomer}
+                      onClick={() => void onRemoveCustomer()}
+                    >
+                      {removingCustomer ? "Removing" : "Delete"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-danger w-full"
+                  role="menuitem"
+                  onClick={() => setConfirm(true)}
+                >
+                  Delete customer
+                </button>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function JoinPendingNotice({
+  title,
+  body,
+  action,
+}: {
+  title: string;
+  body: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="join-pending">
+      <p className="text-sm font-semibold">{title}</p>
+      <p className="mt-1 text-sm leading-6 text-muted">{body}</p>
+      {action}
     </div>
   );
 }

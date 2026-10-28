@@ -46,4 +46,8 @@ If the app was set up before profile photos, run `supabase/avatar.sql` in the SQ
 
 If the app was set up before referrals, run `supabase/referral.sql` so users can share a referral link.
 
+If the app was set up before customer removal, run `supabase/page-blocks.sql` so a page can remove a customer.
+
+If the app was set up before join approval, run `supabase/join-status.sql` so people wait for a page to accept them before chatting.
+
 People join a page from its link or QR code by signing in or creating an account, so they can open the chat again later.

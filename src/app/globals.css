@@ -726,6 +726,26 @@ a {
     background: #e4eee9;
   }
 
+  .pending-pill {
+    display: inline-flex;
+    height: 22px;
+    flex-shrink: 0;
+    align-items: center;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: #fff4d6;
+    color: #8a5a00;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+
+  .join-pending {
+    padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    background: var(--card);
+  }
+
   .page-card {
     display: flex;
     width: 100%;

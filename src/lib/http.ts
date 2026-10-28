@@ -15,6 +15,18 @@ export function isForbidden(error: unknown) {
   return error instanceof ApiError && error.status === 403;
 }
 
+export function isNotFound(error: unknown) {
+  return error instanceof ApiError && error.status === 404;
+}
+
+export function isBlockedFromPage(error: unknown) {
+  return (
+    isForbidden(error) &&
+    error instanceof Error &&
+    error.message.toLowerCase().includes("no longer message")
+  );
+}
+
 export async function api<T>(input: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   const isFormData =

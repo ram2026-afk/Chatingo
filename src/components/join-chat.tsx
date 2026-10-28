@@ -11,7 +11,12 @@ import { HeroShell } from "@/components/hero-shell";
 import { Alert } from "@/components/loading";
 import { forgotPath } from "@/lib/auth-redirect";
 import { LIMITS } from "@/lib/constants";
-import { api, isForbidden, isUnauthorized } from "@/lib/http";
+import {
+  api,
+  isBlockedFromPage,
+  isForbidden,
+  isUnauthorized,
+} from "@/lib/http";
 import {
   cleanReferralCode,
   readClientReferral,
@@ -79,7 +84,8 @@ export function JoinChat() {
   );
   const [joining, setJoining] = useState(false);
   const [managesPage, setManagesPage] = useState(false);
-  const signedInUser = session?.role === "user" && !managesPage;
+  const [blocked, setBlocked] = useState(false);
+  const signedInUser = session?.role === "user" && !managesPage && !blocked;
   const isPageStaff = session?.role === "admin" || managesPage;
 
   useEffect(() => {
@@ -119,6 +125,11 @@ export function JoinChat() {
             return;
           } catch (caught) {
             if (cancelled) return;
+            if (isBlockedFromPage(caught)) {
+              setBlocked(true);
+              setStatus("ready");
+              return;
+            }
             if (isForbidden(caught)) {
               setManagesPage(true);
               setStatus("ready");
@@ -177,6 +188,8 @@ export function JoinChat() {
     } catch (caught) {
       if (isUnauthorized(caught)) {
         setError("Sign in or create an account to join this page.");
+      } else if (isBlockedFromPage(caught)) {
+        setBlocked(true);
       } else if (isForbidden(caught)) {
         setManagesPage(true);
       } else {
@@ -200,6 +213,30 @@ export function JoinChat() {
         <p className="mt-2 text-sm leading-6 text-muted">
           Check the link or QR code and try again.
         </p>
+      </JoinShell>
+    );
+  }
+
+  if (blocked) {
+    return (
+      <JoinShell>
+        <div className="flex items-center gap-3">
+          <PageAvatar
+            name={page.name}
+            imageUrl={page.imageUrl}
+            size="lg"
+            kind="page"
+          />
+          <h1 className="min-w-0 truncate text-[26px] font-semibold tracking-tight">
+            {page.name}
+          </h1>
+        </div>
+        <p className="mt-3 text-sm leading-6 text-muted">
+          You can no longer message this page.
+        </p>
+        <Link href="/inbox" className="btn mt-6 w-full">
+          Open chats
+        </Link>
       </JoinShell>
     );
   }
