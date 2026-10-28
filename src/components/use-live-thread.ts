@@ -18,29 +18,23 @@ const POLL_MS = 1000;
 
 export function useLiveThread({
   conversationId,
-  enabled = true,
-  headers,
   onThread,
   onError,
 }: {
   conversationId?: string;
-  enabled?: boolean;
-  headers?: HeadersInit;
   onThread: (thread: Thread) => void;
   onError?: (error: unknown) => void;
 }) {
   const onThreadRef = useRef(onThread);
   const onErrorRef = useRef(onError);
-  const headersRef = useRef(headers);
 
   useEffect(() => {
     onThreadRef.current = onThread;
     onErrorRef.current = onError;
-    headersRef.current = headers;
   });
 
   useEffect(() => {
-    if (!conversationId || !enabled) return;
+    if (!conversationId) return;
     let cancelled = false;
 
     async function load() {
@@ -48,7 +42,6 @@ export function useLiveThread({
       try {
         const next = await api<Thread>(
           `/api/conversations/${conversationId}?t=${Date.now()}`,
-          headersRef.current ? { headers: headersRef.current } : undefined,
         );
         if (!cancelled) onThreadRef.current(next);
       } catch (error) {
@@ -67,5 +60,5 @@ export function useLiveThread({
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [conversationId, enabled]);
+  }, [conversationId]);
 }

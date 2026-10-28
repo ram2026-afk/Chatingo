@@ -15,6 +15,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 ADMIN_EMAIL=
 ADMIN_PASSWORD=
+NEXT_PUBLIC_APP_URL=
 ```
 
 Paste the publishable key into `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Paste the secret key into `SUPABASE_SERVICE_ROLE_KEY`.
@@ -23,24 +24,26 @@ Paste the publishable key into `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Paste the secret
 
 Email confirmation can stay off in Supabase Auth. Sign-up confirms users in code.
 
-To enable **Continue with Google**:
+Password reset emails need two Auth settings in Supabase:
 
-1. In Google Cloud, create an OAuth client of type **Web application**.
-2. Add authorized JavaScript origin `http://localhost:3000` (and your live origin later).
-3. Add authorized redirect URI `https://YOUR_PROJECT_REF.supabase.co/auth/v1/callback`.
-4. In Supabase **Authentication → Providers → Google**, paste the client ID and secret and turn the provider on.
-5. In **Authentication → URL Configuration**, set the site URL to `http://localhost:3000` and add `http://localhost:3000/auth/callback` to the redirect allow list.
+- **URL Configuration → Site URL** should be your app origin, such as `http://localhost:3000`.
+- **Redirect URLs** should include `http://localhost:3000/reset-password` and your production `/reset-password` URL.
+
+`NEXT_PUBLIC_APP_URL` is optional. Set it if reset emails should always point at a specific origin.
 
 ```bash
 npm install
 npm run dev
 ```
 
-- Users sign in or sign up at [http://localhost:3000](http://localhost:3000).
+- The home page is [http://localhost:3000](http://localhost:3000).
+- Users sign in or sign up at [http://localhost:3000/login](http://localhost:3000/login).
 - Admin sign-in is at `/admin`. That page is not linked from the public screen.
 
 After someone has a user account, grant them access to a page by entering their email on that page. They can reply there. They cannot create pages.
 
 If the app was set up before profile photos, run `supabase/avatar.sql` in the SQL editor so users can add a photo.
 
-Visitors can still join a page from its link or QR code without an account.
+If the app was set up before referrals, run `supabase/referral.sql` so users can share a referral link.
+
+People join a page from its link or QR code by signing in or creating an account, so they can open the chat again later.

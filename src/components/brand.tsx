@@ -1,7 +1,13 @@
 import Image from "next/image";
 import logo from "@/assets/Chatingo.png";
 
-export function Brand({ size = "md" }: { size?: "sm" | "md" }) {
+export function Brand({
+  size = "md",
+  wordmark = true,
+}: {
+  size?: "sm" | "md";
+  wordmark?: boolean;
+}) {
   const wordHeight = size === "sm" ? 28 : 54;
   const markHeight = size === "sm" ? 34 : 64;
   const markWidth = Math.round(markHeight * (logo.width / logo.height));
@@ -12,7 +18,7 @@ export function Brand({ size = "md" }: { size?: "sm" | "md" }) {
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: size === "sm" ? 6 : 8,
+        gap: wordmark ? (size === "sm" ? 6 : 8) : 0,
         minWidth: 0,
         maxWidth: "100%",
       }}
@@ -26,37 +32,32 @@ export function Brand({ size = "md" }: { size?: "sm" | "md" }) {
         priority={size === "md"}
         style={{ flexShrink: 0, height: markHeight, width: "auto" }}
       />
-      <svg
-        className="brand-word"
-        viewBox="0 0 400 76"
-        height={wordHeight}
-        role="img"
-        aria-label="Chat-in-go"
-        style={{ display: "block", minWidth: 0, flex: "1 1 auto" }}
-      >
-        <g
-          fontFamily="'Arial Black', 'Arial Bold', var(--font-brand), Impact, sans-serif"
-          fontWeight="900"
-          fontStyle="italic"
-          fontSize="56"
-          letterSpacing="-1.6"
+      {wordmark ? (
+        <svg
+          className="brand-word"
+          viewBox="0 0 400 76"
+          height={wordHeight}
+          role="img"
+          aria-label="Chat-in-go"
+          style={{ display: "block", minWidth: 0, flex: "1 1 auto" }}
         >
-          <text x="4" y="53">
-            <tspan fill="#111111">Chat</tspan>
-            <tspan fill="#1a6dff">-in-</tspan>
-            <tspan fill="#7ee03a">go</tspan>
-          </text>
-        </g>
-      </svg>
+          <g
+            fontFamily="'Arial Black', 'Arial Bold', var(--font-brand), Impact, sans-serif"
+            fontWeight="900"
+            fontStyle="italic"
+            fontSize="56"
+            letterSpacing="-1.6"
+          >
+            <text x="4" y="53">
+              <tspan fill="#111111">Chat</tspan>
+              <tspan fill="#1a6dff">-in-</tspan>
+              <tspan fill="#7ee03a">go</tspan>
+            </text>
+          </g>
+        </svg>
+      ) : null}
     </span>
   );
-}
-
-export function initials(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "P";
-  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
-  return `${parts[0].slice(0, 1)}${parts[1].slice(0, 1)}`.toUpperCase();
 }
 
 export function DefaultAvatarIcon() {

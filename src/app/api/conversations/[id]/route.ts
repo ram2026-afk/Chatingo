@@ -3,21 +3,15 @@ import {
   errorResponse,
   getThreadForAdmin,
   getThreadForUser,
-  getThreadForVisitor,
   HttpError,
 } from "@/lib/store";
 
 type Context = { params: Promise<{ id: string }> };
 
-export async function GET(request: Request, context: Context) {
+export async function GET(_request: Request, context: Context) {
   try {
     const { id } = await context.params;
-    const visitorToken = request.headers.get("x-visitor-token");
     const headers = { "Cache-Control": "private, no-store, no-cache" };
-    if (visitorToken) {
-      const thread = await getThreadForVisitor(id, visitorToken);
-      return Response.json(thread, { headers });
-    }
     const session = await getOptionalSession();
     if (session?.role === "admin") {
       const thread = await getThreadForAdmin(id, {

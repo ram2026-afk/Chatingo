@@ -1,8 +1,10 @@
+import { cookies } from "next/headers";
 import { getOptionalSession } from "@/lib/auth";
+import { REF_COOKIE } from "@/lib/constants";
+import { cleanReferralCode } from "@/lib/referral";
 import {
   errorResponse,
   HttpError,
-  joinPage,
   joinPageAsUser,
   userManagesSlug,
 } from "@/lib/store";
@@ -16,20 +18,27 @@ export async function POST(request: Request, context: Context) {
     if (session?.role === "admin") {
       throw new HttpError(403, "Sign in as a user to join this page.");
     }
-    if (session?.role === "user" && session.accountId) {
-      if (await userManagesSlug(slug, session.accountId)) {
-        throw new HttpError(
-          403,
-          "You manage this page. Reply from the page inbox.",
-        );
-      }
-      const result = await joinPageAsUser(slug, session.accountId);
-      return Response.json(result, { status: 201 });
+    if (!session?.accountId || session.role !== "user") {
+      throw new HttpError(401, "Sign in or create an account to join this page.");
+    }
+    if (await userManagesSlug(slug, session.accountId)) {
+      throw new HttpError(
+        403,
+        "You manage this page. Reply from the page inbox.",
+      );
     }
     const body = (await request.json().catch(() => null)) as {
-      name?: unknown;
+      ref?: unknown;
     } | null;
-    const result = await joinPage(slug, body?.name);
+    const jar = await cookies();
+    const referralCode =
+      cleanReferralCode(body?.ref) ||
+      cleanReferralCode(jar.get(REF_COOKIE)?.value);
+    const result = await joinPageAsUser(
+      slug,
+      session.accountId,
+      referralCode || null,
+    );
     return Response.json(result, { status: 201 });
   } catch (error) {
     return errorResponse(error);

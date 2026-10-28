@@ -9,7 +9,7 @@ export default function NotFound() {
           That address does not match a page.
         </p>
         <Link href="/" className="btn mt-5">
-          Go to sign in
+          Go home
         </Link>
       </div>
     </main>

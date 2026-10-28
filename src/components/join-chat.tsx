@@ -1,41 +1,23 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import logo from "@/assets/Chatingo.png";
 import { PageAvatar } from "@/components/brand";
-import { Composer, MessageList } from "@/components/chat-ui";
-import { useChatThread } from "@/components/use-chat-thread";
-import { Alert, Loading } from "@/components/loading";
+import { AuthFallback } from "@/components/auth-hero";
+import { HeroShell } from "@/components/hero-shell";
+import { Alert } from "@/components/loading";
+import { forgotPath } from "@/lib/auth-redirect";
 import { LIMITS } from "@/lib/constants";
-import { api, isForbidden } from "@/lib/http";
-import type { JoinResult, PublicPage, SessionInfo, Thread } from "@/lib/types";
-
-type SavedVisit = {
-  token: string;
-  conversationId: string;
-  name: string;
-};
-
-function storageKey(slug: string) {
-  return `pages-visit:${slug}`;
-}
-
-function readSaved(slug: string): SavedVisit | null {
-  try {
-    const raw = localStorage.getItem(storageKey(slug));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as SavedVisit;
-    if (!parsed.token || !parsed.conversationId || !parsed.name) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function writeSaved(slug: string, visit: SavedVisit) {
-  localStorage.setItem(storageKey(slug), JSON.stringify(visit));
-}
+import { api, isForbidden, isUnauthorized } from "@/lib/http";
+import {
+  cleanReferralCode,
+  readClientReferral,
+  saveClientReferral,
+} from "@/lib/referral";
+import type { JoinResult, PublicPage, SessionInfo } from "@/lib/types";
 
 async function currentSession() {
   try {
@@ -45,14 +27,52 @@ async function currentSession() {
   }
 }
 
+function JoinShell({ children }: { children: React.ReactNode }) {
+  return (
+    <HeroShell className="grid grid-cols-1 items-start gap-8 px-6 py-8 sm:px-10 md:px-16 lg:grid-cols-2 lg:items-center lg:gap-12">
+      <Link
+        href="/"
+        className="flex items-center justify-center"
+        aria-label="Chat-in-go home"
+      >
+        <Image
+          src={logo}
+          alt="Chat-in-go"
+          width={logo.width}
+          height={logo.height}
+          priority
+          sizes="(min-width: 1024px) 40vw, 60vw"
+          className="h-auto w-[min(100%,220px)] sm:w-[min(100%,280px)] lg:w-full lg:max-w-md"
+        />
+      </Link>
+      <div className="mx-auto w-full min-w-0 max-w-md lg:mx-0 lg:justify-self-center">
+        {children}
+      </div>
+    </HeroShell>
+  );
+}
+
+function joinReferral(explicit?: string | null) {
+  return (
+    cleanReferralCode(explicit) ||
+    readClientReferral() ||
+    undefined
+  );
+}
+
 export function JoinChat() {
   const params = useParams<{ slug: string }>();
   const slug = Array.isArray(params.slug) ? params.slug[0] : params.slug;
+  const searchParams = useSearchParams();
+  const referral = searchParams.get("ref") ?? "";
   const router = useRouter();
   const [page, setPage] = useState<PublicPage | null>(null);
   const [session, setSession] = useState<SessionInfo | null>(null);
-  const [visit, setVisit] = useState<SavedVisit | null>(null);
-  const [name, setName] = useState("");
+  const [mode, setMode] = useState<"signin" | "signup">("signup");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [status, setStatus] = useState<"loading" | "ready" | "missing">(
     "loading",
@@ -61,24 +81,16 @@ export function JoinChat() {
   const [managesPage, setManagesPage] = useState(false);
   const signedInUser = session?.role === "user" && !managesPage;
   const isPageStaff = session?.role === "admin" || managesPage;
-  const {
-    thread,
-    setThread,
-    replyTo,
-    setReplyTo,
-    sendError,
-    setSendError,
-    send,
-    act,
-  } = useChatThread({
-    conversationId: visit?.conversationId,
-    sender: "visitor",
-    enabled: Boolean(visit),
-    headers:
-      signedInUser || !visit
-        ? undefined
-        : { "x-visitor-token": visit.token },
-  });
+
+  useEffect(() => {
+    const code = cleanReferralCode(referral);
+    if (!code) return;
+    saveClientReferral(code);
+    void api("/api/ref", {
+      method: "POST",
+      body: JSON.stringify({ ref: code }),
+    }).catch(() => {});
+  }, [referral]);
 
   useEffect(() => {
     if (!slug) return;
@@ -100,7 +112,7 @@ export function JoinChat() {
           try {
             const result = await api<JoinResult>(`/api/p/${slug}/join`, {
               method: "POST",
-              body: JSON.stringify({}),
+              body: JSON.stringify({ ref: joinReferral(referral) }),
             });
             if (cancelled) return;
             router.replace(`/inbox?chat=${result.conversationId}`);
@@ -122,25 +134,6 @@ export function JoinChat() {
           }
         }
 
-        if (nextSession?.role === "admin") {
-          setStatus("ready");
-          return;
-        }
-
-        const saved = readSaved(slug);
-        if (saved) {
-          try {
-            const existing = await api<Thread>(
-              `/api/conversations/${saved.conversationId}`,
-              { headers: { "x-visitor-token": saved.token } },
-            );
-            if (cancelled) return;
-            setVisit(saved);
-            setThread(existing);
-          } catch {
-            localStorage.removeItem(storageKey(slug));
-          }
-        }
         if (!cancelled) setStatus("ready");
       } catch {
         if (!cancelled) setStatus("missing");
@@ -151,226 +144,227 @@ export function JoinChat() {
     return () => {
       cancelled = true;
     };
-  }, [router, slug, setThread]);
+  }, [referral, router, slug]);
+
+  function switchMode(nextMode: "signin" | "signup") {
+    setMode(nextMode);
+    setError("");
+  }
 
   async function join(event: React.FormEvent) {
     event.preventDefault();
     if (!slug) return;
     setError("");
-    if (!name.trim()) {
-      setError("Enter your name to join.");
-      return;
-    }
     setJoining(true);
     try {
+      if (mode === "signup") {
+        await api<SessionInfo>("/api/auth/signup", {
+          method: "POST",
+          body: JSON.stringify({ firstName, lastName, email, password }),
+        });
+      } else {
+        await api<SessionInfo>("/api/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ email, password }),
+        });
+      }
       const result = await api<JoinResult>(`/api/p/${slug}/join`, {
         method: "POST",
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ ref: joinReferral(referral) }),
       });
-      const saved: SavedVisit = {
-        token: result.token,
-        conversationId: result.conversationId,
-        name: result.visitorName,
-      };
-      writeSaved(slug, saved);
-      const next = await api<Thread>(
-        `/api/conversations/${saved.conversationId}`,
-        {
-          headers: { "x-visitor-token": saved.token },
-        },
-      );
-      setVisit(saved);
-      setThread(next);
+      router.replace(`/inbox?chat=${result.conversationId}`);
+      router.refresh();
     } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : "Could not join this page.",
-      );
+      if (isUnauthorized(caught)) {
+        setError("Sign in or create an account to join this page.");
+      } else if (isForbidden(caught)) {
+        setManagesPage(true);
+      } else {
+        setError(
+          caught instanceof Error ? caught.message : "Could not join this page.",
+        );
+      }
     } finally {
       setJoining(false);
     }
   }
 
-  function leave() {
-    if (signedInUser) {
-      router.push("/inbox");
-      return;
-    }
-    if (!slug) return;
-    localStorage.removeItem(storageKey(slug));
-    setVisit(null);
-    setThread(null);
-    setName("");
-    setSendError("");
-    setReplyTo(null);
-  }
-
-  if (status === "loading") return <Loading label="Opening page" />;
+  if (status === "loading") return <AuthFallback />;
 
   if (status === "missing" || !page) {
     return (
-      <main className="flex min-h-dvh items-center justify-center px-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] py-6 sm:px-4">
-        <div className="card w-full max-w-md p-5 sm:p-7">
-          <h1 className="text-xl font-semibold">This page is not available</h1>
-          <p className="mt-2 text-sm leading-6 text-muted">
-            Check the link or QR code and try again.
-          </p>
-        </div>
-      </main>
+      <JoinShell>
+        <h1 className="text-[26px] font-semibold leading-tight tracking-tight">
+          This page is not available
+        </h1>
+        <p className="mt-2 text-sm leading-6 text-muted">
+          Check the link or QR code and try again.
+        </p>
+      </JoinShell>
     );
   }
 
   if (isPageStaff || signedInUser) {
     return (
-      <main className="flex min-h-dvh items-center justify-center overflow-y-auto px-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] py-6 sm:px-4 sm:py-10">
-        <div className="card w-full min-w-0 max-w-md p-5 sm:p-9">
-          <div className="flex items-center gap-3">
-            <PageAvatar
-              name={page.name}
-              imageUrl={page.imageUrl}
-              size="lg"
-              kind="page"
-            />
-            <h1 className="min-w-0 truncate text-[26px] font-semibold tracking-tight sm:text-[30px]">
-              {page.name}
-            </h1>
-          </div>
-          <p className="mt-3 text-sm leading-6">
-            {signedInUser
-              ? error || "This chat is in your inbox."
-              : session?.role === "admin"
+      <JoinShell>
+        <div className="flex items-center gap-3">
+          <PageAvatar
+            name={page.name}
+            imageUrl={page.imageUrl}
+            size="lg"
+            kind="page"
+          />
+          <h1 className="min-w-0 truncate text-[26px] font-semibold tracking-tight">
+            {page.name}
+          </h1>
+        </div>
+        <p className="mt-3 text-sm leading-6 text-muted">
+          {signedInUser
+            ? error || "This chat is in your inbox."
+            : session?.role === "admin"
               ? "You are signed in as admin. Share this link or QR code so people can join. Reply from the page inbox."
               : "You can reply to this page from the inbox. You cannot create pages."}
-          </p>
-          <Link
-            href={signedInUser ? "/inbox" : "/pages"}
-            className="btn mt-6 w-full"
-          >
-            {signedInUser ? "Open chats" : "Open inbox"}
-          </Link>
-        </div>
-      </main>
-    );
-  }
-
-  if (!visit || !thread) {
-    return (
-      <main className="flex min-h-dvh items-center justify-center overflow-y-auto px-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] py-6 sm:px-4 sm:py-10">
-        <div className="card w-full min-w-0 max-w-md p-5 sm:p-9">
-          <div className="flex items-center gap-3">
-            <PageAvatar
-              name={page.name}
-              imageUrl={page.imageUrl}
-              size="lg"
-              kind="page"
-            />
-            <h1 className="min-w-0 truncate text-[26px] font-semibold tracking-tight sm:text-[30px]">
-              {page.name}
-            </h1>
-          </div>
-          <p className="mt-3 text-sm leading-6 text-ink">
-            {page.welcome || "Send a message and this page can reply here."}
-          </p>
-          <form
-            className="mt-6 flex flex-col gap-4"
-            onSubmit={(event) => void join(event)}
-          >
-            <div>
-              <label className="label" htmlFor="visitor-name">
-                Your name
-              </label>
-              <input
-                id="visitor-name"
-                className="field"
-                value={name}
-                maxLength={LIMITS.visitorName}
-                autoComplete="name"
-                autoFocus
-                onChange={(event) => setName(event.target.value)}
-                required
-              />
-            </div>
-            <Alert>{error}</Alert>
-            <button className="btn w-full" type="submit" disabled={joining}>
-              {joining ? "Joining" : "Join and message"}
-            </button>
-            <p className="text-xs leading-5 text-muted">
-              No account needed. You can also{" "}
-              <Link
-                href={`/?next=/p/${slug}`}
-                className="font-semibold text-ink"
-              >
-                sign in as a user
-              </Link>
-              .
-            </p>
-          </form>
-        </div>
-      </main>
+        </p>
+        <Link
+          href={signedInUser ? "/inbox" : "/pages"}
+          className="btn mt-6 w-full"
+        >
+          {signedInUser ? "Open chats" : "Open inbox"}
+        </Link>
+      </JoinShell>
     );
   }
 
   return (
-    <main className="flex h-dvh flex-col bg-canvas px-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))] py-2 sm:px-4 sm:py-6">
-      <section className="card mx-auto flex h-full min-h-0 w-full min-w-0 max-w-lg flex-col overflow-hidden">
-        <header className="flex min-w-0 items-center justify-between gap-3 px-3 py-3 sm:px-4 sm:py-3.5">
-          <div className="flex min-w-0 items-center gap-3">
-            <PageAvatar
-              name={page.name}
-              imageUrl={page.imageUrl}
-              kind="page"
-            />
-            <div className="min-w-0">
-              <h1 className="truncate text-base font-semibold">{page.name}</h1>
-              <p className="text-xs text-muted">Joined as {visit.name}</p>
+    <JoinShell>
+      <div className="flex items-center gap-3">
+        <PageAvatar
+          name={page.name}
+          imageUrl={page.imageUrl}
+          size="md"
+          kind="page"
+        />
+        <h1 className="min-w-0 truncate text-[26px] font-semibold leading-tight tracking-tight">
+          {page.name}
+        </h1>
+      </div>
+      <form
+        className="mt-6 flex flex-col gap-4"
+        onSubmit={(event) => void join(event)}
+      >
+        {mode === "signup" ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="label" htmlFor="join-first-name">
+                First name
+              </label>
+              <input
+                id="join-first-name"
+                className="field"
+                value={firstName}
+                maxLength={LIMITS.givenName}
+                autoComplete="given-name"
+                autoFocus
+                onChange={(event) => setFirstName(event.target.value)}
+                required
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="join-last-name">
+                Last name
+              </label>
+              <input
+                id="join-last-name"
+                className="field"
+                value={lastName}
+                maxLength={LIMITS.givenName}
+                autoComplete="family-name"
+                onChange={(event) => setLastName(event.target.value)}
+                required
+              />
             </div>
           </div>
-          <button
-            type="button"
-            className="btn btn-text shrink-0"
-            onClick={leave}
-          >
-            {signedInUser ? "Chats" : "Leave"}
-          </button>
-        </header>
-        <MessageList
-          messages={thread.messages}
-          viewer="visitor"
-          pageName={page.name}
-          visitorName={visit.name}
-          pageImageUrl={page.imageUrl}
-          visitorImageUrl={session?.imageUrl}
-          pageReadAt={thread.conversation.pageReadAt}
-          visitorReadAt={thread.conversation.visitorReadAt}
-          empty={
-            page.welcome || "You're in. Send a message whenever you're ready."
-          }
-          retention={thread.retention}
-          onReply={setReplyTo}
-          onAct={act}
-        />
-        {sendError ? (
-          <div className="bg-card px-3 pb-1">
-            <Alert>{sendError}</Alert>
-          </div>
         ) : null}
-        <Composer
-          placeholder={`Message ${page.name}`}
-          replyTo={replyTo}
-          replyName={
-            replyTo
-              ? replyTo.sender === "visitor"
-                ? "You"
-                : page.name
-              : undefined
-          }
-          onCancelReply={() => setReplyTo(null)}
-          onError={setSendError}
-          onSend={async (payload) => {
-            setSendError("");
-            await send(payload);
-          }}
-        />
-      </section>
-    </main>
+        <div>
+          <label className="label" htmlFor="join-email">
+            Email
+          </label>
+          <input
+            id="join-email"
+            className="field"
+            type="email"
+            autoComplete="username"
+            value={email}
+            autoFocus={mode === "signin"}
+            onChange={(event) => setEmail(event.target.value)}
+            required
+          />
+        </div>
+        <div>
+          <label className="label" htmlFor="join-password">
+            Password
+          </label>
+          <input
+            id="join-password"
+            className="field"
+            type="password"
+            autoComplete={mode === "signup" ? "new-password" : "current-password"}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            minLength={6}
+            required
+          />
+          {mode === "signup" ? (
+            <p className="mt-1.5 text-xs text-muted">
+              Use at least 6 characters.
+            </p>
+          ) : (
+            <p className="mt-1.5 text-right text-xs">
+              <Link
+                href={forgotPath({ next: slug ? `/p/${slug}` : null })}
+                className="font-semibold text-ink"
+              >
+                Forgot password?
+              </Link>
+            </p>
+          )}
+        </div>
+        <Alert>{error}</Alert>
+        <button className="btn w-full" type="submit" disabled={joining}>
+          {joining
+            ? mode === "signup"
+              ? "Joining"
+              : "Signing in"
+            : mode === "signup"
+              ? "Join chat"
+              : "Sign in and join"}
+        </button>
+      </form>
+      <p className="mt-5 text-center text-sm leading-6 text-muted">
+        {mode === "signup" ? (
+          <>
+            Already have an account?{" "}
+            <button
+              type="button"
+              className="bg-transparent p-0 font-semibold text-ink"
+              onClick={() => switchMode("signin")}
+            >
+              Sign in
+            </button>
+          </>
+        ) : (
+          <>
+            New here?{" "}
+            <button
+              type="button"
+              className="bg-transparent p-0 font-semibold text-ink"
+              onClick={() => switchMode("signup")}
+            >
+              Create an account
+            </button>
+          </>
+        )}
+      </p>
+    </JoinShell>
   );
 }

@@ -11,7 +11,11 @@ import {
   type MessageFields,
 } from "@/lib/chat-media";
 import {
-  messageInRetention,
+  cleanReferralCode,
+  referralCodeFromUserId,
+  userIdFromReferralCode,
+} from "@/lib/referral";
+import {
   retainedFrom,
   retentionNotice,
   zonedDayKey,
@@ -49,6 +53,7 @@ type ConversationRow = {
   visitor_name: string;
   visitor_token: string;
   user_id: string | null;
+  referred_by?: string | null;
   admin_read_at: string | null;
   user_read_at: string | null;
   created_at: string;
@@ -83,11 +88,6 @@ function db() {
   return supabaseAdmin();
 }
 
-function tokensMatch(left: string, right: string) {
-  if (!left || !right || left.length !== right.length) return false;
-  return timingSafeEqual(Buffer.from(left), Buffer.from(right));
-}
-
 function sameSecret(left: string, right: string) {
   const leftHash = createHash("sha256").update(left).digest();
   const rightHash = createHash("sha256").update(right).digest();
@@ -108,13 +108,45 @@ function throwIf(error: { message?: string; code?: string } | null) {
 
 let purgedForDay = "";
 
+function chatImagePath(url: string | null | undefined) {
+  if (!url) return null;
+  const marker = "/avatars/";
+  const index = url.indexOf(marker);
+  if (index < 0) return null;
+  const path = decodeURIComponent(url.slice(index + marker.length).split("?")[0]);
+  return path.startsWith("chats/") ? path : null;
+}
+
+async function removeChatImages(messages: MessageRow[]) {
+  const paths = [
+    ...new Set(
+      messages
+        .flatMap((message) => [
+          chatImagePath(message.image_url),
+          chatImagePath(decodeChatBody(message.body).imageUrl),
+        ])
+        .filter((path): path is string => Boolean(path)),
+    ),
+  ];
+  for (let index = 0; index < paths.length; index += 100) {
+    const { error } = await db()
+      .storage.from("avatars")
+      .remove(paths.slice(index, index + 100));
+    if (error) console.error(error);
+  }
+}
+
 export async function purgeDueMessages(now = new Date()) {
-  const key = zonedDayKey(now);
+  const cutoff = retainedFrom(now).toISOString();
+  const key = `${zonedDayKey(now)}:${cutoff}`;
   if (purgedForDay === key) return;
-  const { error } = await db()
+  const { data, error: readError } = await db()
     .from("messages")
-    .delete()
-    .lt("created_at", retainedFrom(now).toISOString());
+    .select("*")
+    .lt("created_at", cutoff);
+  throwIf(readError);
+  await removeChatImages((data ?? []) as MessageRow[]);
+  const { error } = await db().from("messages").delete().lt("created_at", cutoff);
   throwIf(error);
   purgedForDay = key;
 }
@@ -268,6 +300,82 @@ function missingImageColumn(error: { message?: string; code?: string } | null) {
   );
 }
 
+function missingReferralColumn(error: { message?: string; code?: string } | null) {
+  const text = `${error?.code ?? ""} ${error?.message ?? ""}`.toLowerCase();
+  return (
+    text.includes("referred_by") ||
+    text.includes("pgrst204") ||
+    text.includes("schema cache")
+  );
+}
+
+export async function ensureReferralCode(userId: string) {
+  await connection();
+  const profile = await getProfile(userId);
+  if (!profile) throw new HttpError(401, "Sign in required.");
+  return referralCodeFromUserId(profile.id);
+}
+
+const REFERRAL_BUCKET = "referrals";
+const conversationReferralCache = new Map<string, string | null>();
+
+async function ensureReferralBucket() {
+  const { data } = await db().storage.getBucket(REFERRAL_BUCKET);
+  if (data) return;
+  const { error } = await db().storage.createBucket(REFERRAL_BUCKET, {
+    public: false,
+    fileSizeLimit: 8192,
+  });
+  if (error && !error.message.toLowerCase().includes("already")) {
+    console.error(error);
+  }
+}
+
+async function saveConversationReferral(conversationId: string, referredBy: string) {
+  conversationReferralCache.set(conversationId, referredBy);
+  await ensureReferralBucket();
+  const { error } = await db()
+    .storage.from(REFERRAL_BUCKET)
+    .upload(
+      `${conversationId}.json`,
+      Buffer.from(JSON.stringify({ referredBy })),
+      { contentType: "application/json", upsert: true },
+    );
+  if (error) console.error(error);
+}
+
+async function referredByFor(conversation: ConversationRow) {
+  if (conversation.referred_by) return conversation.referred_by;
+  if (conversationReferralCache.has(conversation.id)) {
+    return conversationReferralCache.get(conversation.id) ?? null;
+  }
+  const stored = await loadConversationReferral(conversation.id);
+  conversationReferralCache.set(conversation.id, stored);
+  return stored;
+}
+
+async function loadConversationReferral(conversationId: string) {
+  const { data, error } = await db()
+    .storage.from(REFERRAL_BUCKET)
+    .download(`${conversationId}.json`);
+  if (error || !data) return null;
+  try {
+    const parsed = JSON.parse(await data.text()) as { referredBy?: string };
+    return typeof parsed.referredBy === "string" ? parsed.referredBy : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveReferrerId(code: string | null | undefined, joinerId: string) {
+  const referral = cleanReferralCode(code);
+  if (!referral) return null;
+  const fromCode = userIdFromReferralCode(referral);
+  if (!fromCode || fromCode === joinerId) return null;
+  const profile = await getProfile(fromCode);
+  return profile?.id ?? null;
+}
+
 function imageExt(type: string) {
   if (type.includes("png")) return "png";
   if (type.includes("webp")) return "webp";
@@ -389,13 +497,8 @@ async function ensureProfile(user: {
   return (withImage as ProfileRow | null) ?? created;
 }
 
-async function conversationResult(page: PageRow, conversation: ConversationRow) {
-  return {
-    conversationId: conversation.id,
-    token: conversation.visitor_token,
-    visitorName: conversation.visitor_name,
-    page: await publicPageWithImage(page),
-  };
+function conversationResult(conversation: ConversationRow) {
+  return { conversationId: conversation.id };
 }
 
 async function lastMessages(conversationIds: string[]) {
@@ -458,13 +561,28 @@ function readPassword(value: unknown, minimum = 6) {
   return value;
 }
 
+function personName(input: {
+  name?: unknown;
+  firstName?: unknown;
+  lastName?: unknown;
+}) {
+  if (input.firstName != null || input.lastName != null) {
+    const first = cleanText(input.firstName, "First name", 1, LIMITS.givenName);
+    const last = cleanText(input.lastName, "Last name", 1, LIMITS.givenName);
+    return `${first} ${last}`;
+  }
+  return cleanText(input.name, "Name", 2, LIMITS.staffName);
+}
+
 export async function signUpUser(input: {
-  name: unknown;
+  name?: unknown;
+  firstName?: unknown;
+  lastName?: unknown;
   email: unknown;
   password: unknown;
 }) {
   await connection();
-  const name = cleanText(input.name, "Name", 2, LIMITS.staffName);
+  const name = personName(input);
   const email = cleanEmail(input.email);
   const password = readPassword(input.password);
   try {
@@ -516,34 +634,6 @@ export async function loginUser(emailInput: unknown, passwordInput: unknown) {
   return createSession("user", data.user.id);
 }
 
-export async function loginWithGoogle(accessToken: unknown) {
-  await connection();
-  if (typeof accessToken !== "string" || !accessToken) {
-    throw new HttpError(400, "Google sign-in did not finish.");
-  }
-  const { data, error } = await supabaseAuthClient().auth.getUser(accessToken);
-  if (error || !data.user) {
-    throw new HttpError(401, "Google sign-in did not finish.");
-  }
-  const email = (data.user.email ?? "").trim().toLowerCase();
-  if (!email) {
-    throw new HttpError(400, "Google did not share an email address.");
-  }
-  try {
-    if (email === adminCredentials().email) {
-      throw new HttpError(403, "Use the admin sign-in page.");
-    }
-  } catch (caught) {
-    if (caught instanceof HttpError && caught.status === 403) throw caught;
-  }
-  await ensureProfile({
-    id: data.user.id,
-    email,
-    user_metadata: data.user.user_metadata,
-  });
-  return createSession("user", data.user.id);
-}
-
 export async function loginAdmin(emailInput: unknown, passwordInput: unknown) {
   await connection();
   const email = cleanEmail(emailInput);
@@ -553,6 +643,79 @@ export async function loginAdmin(emailInput: unknown, passwordInput: unknown) {
     throw new HttpError(401, "Email or password is incorrect.");
   }
   return createSession("admin", null);
+}
+
+export async function requestPasswordReset(
+  emailInput: unknown,
+  redirectTo: string,
+) {
+  await connection();
+  const email = cleanEmail(emailInput);
+  try {
+    if (email === adminCredentials().email) return;
+  } catch (error) {
+    if (error instanceof HttpError && error.status !== 503) throw error;
+  }
+  const { error } = await supabaseAuthClient().auth.resetPasswordForEmail(
+    email,
+    { redirectTo },
+  );
+  if (!error) return;
+  const message = error.message.toLowerCase();
+  const code = "code" in error ? String(error.code) : "";
+  const status = "status" in error ? Number(error.status) : 0;
+  if (
+    message.includes("not found") ||
+    message.includes("unable to find") ||
+    message.includes("user not found")
+  ) {
+    return;
+  }
+  if (
+    status === 429 ||
+    code.includes("rate_limit") ||
+    message.includes("rate limit")
+  ) {
+    throw new HttpError(429, "Wait a minute, then try again.");
+  }
+  throw new HttpError(503, "Could not send a reset email. Try again in a moment.");
+}
+
+async function userIdFromRecovery(input: {
+  accessToken?: unknown;
+  tokenHash?: unknown;
+}) {
+  if (typeof input.tokenHash === "string" && input.tokenHash) {
+    const { data, error } = await supabaseAuthClient().auth.verifyOtp({
+      type: "recovery",
+      token_hash: input.tokenHash,
+    });
+    if (!error && data.user) return data.user.id;
+  }
+  if (typeof input.accessToken === "string" && input.accessToken) {
+    const { data, error } = await db().auth.getUser(input.accessToken);
+    if (!error && data.user) return data.user.id;
+  }
+  throw new HttpError(400, "This reset link is invalid or has expired.");
+}
+
+export async function completePasswordReset(input: {
+  accessToken?: unknown;
+  tokenHash?: unknown;
+  password: unknown;
+  confirm: unknown;
+}) {
+  await connection();
+  const password = readPassword(input.password);
+  if (typeof input.confirm !== "string" || input.confirm !== password) {
+    throw new HttpError(400, "Passwords do not match.");
+  }
+  const userId = await userIdFromRecovery(input);
+  const { error } = await db().auth.admin.updateUserById(userId, { password });
+  if (error) {
+    throw new HttpError(400, error.message || "Could not update password.");
+  }
+  return createSession("user", userId);
 }
 
 export async function sessionInfo(session: Session): Promise<SessionInfo> {
@@ -979,28 +1142,11 @@ export async function userManagesSlug(slug: string, userId: string | null) {
   return userHasPage(userId, page.id);
 }
 
-export async function joinPage(slug: string, nameInput: unknown) {
-  await connection();
-  const visitorName = cleanText(nameInput, "Name", 1, LIMITS.visitorName);
-  const page = await requirePageBySlug(slug);
-  const now = new Date().toISOString();
-  const { data, error } = await db()
-    .from("conversations")
-    .insert({
-      page_id: page.id,
-      visitor_name: visitorName,
-      visitor_token: randomBytes(32).toString("hex"),
-      user_id: null,
-      created_at: now,
-      updated_at: now,
-    })
-    .select("*")
-    .single();
-  throwIf(error);
-  return conversationResult(page, data as ConversationRow);
-}
-
-export async function joinPageAsUser(slug: string, userId: string) {
+export async function joinPageAsUser(
+  slug: string,
+  userId: string,
+  referralCode?: string | null,
+) {
   await connection();
   const page = await requirePageBySlug(slug);
   const profile = await getProfile(userId);
@@ -1012,20 +1158,36 @@ export async function joinPageAsUser(slug: string, userId: string) {
     .eq("user_id", userId)
     .maybeSingle();
   throwIf(existingError);
-  if (existing) return conversationResult(page, existing as ConversationRow);
+  if (existing) return conversationResult(existing as ConversationRow);
   const now = new Date().toISOString();
-  const { data, error } = await db()
-    .from("conversations")
-    .insert({
-      page_id: page.id,
-      visitor_name: profile.name,
-      visitor_token: randomBytes(32).toString("hex"),
-      user_id: userId,
-      created_at: now,
-      updated_at: now,
-    })
-    .select("*")
-    .single();
+  const referredBy = await resolveReferrerId(referralCode, userId);
+  const payload = {
+    page_id: page.id,
+    visitor_name: profile.name,
+    visitor_token: randomBytes(32).toString("hex"),
+    user_id: userId,
+    created_at: now,
+    updated_at: now,
+    ...(referredBy ? { referred_by: referredBy } : {}),
+  };
+  const insert = await db().from("conversations").insert(payload).select("*").single();
+  let { data, error } = insert;
+  if (error && referredBy && missingReferralColumn(error)) {
+    const retry = await db()
+      .from("conversations")
+      .insert({
+        page_id: payload.page_id,
+        visitor_name: payload.visitor_name,
+        visitor_token: payload.visitor_token,
+        user_id: payload.user_id,
+        created_at: payload.created_at,
+        updated_at: payload.updated_at,
+      })
+      .select("*")
+      .single();
+    data = retry.data;
+    error = retry.error;
+  }
   if (error?.code === "23505") {
     const { data: again, error: againError } = await db()
       .from("conversations")
@@ -1034,10 +1196,14 @@ export async function joinPageAsUser(slug: string, userId: string) {
       .eq("user_id", userId)
       .maybeSingle();
     throwIf(againError);
-    if (again) return conversationResult(page, again as ConversationRow);
+    if (again) return conversationResult(again as ConversationRow);
   }
   throwIf(error);
-  return conversationResult(page, data as ConversationRow);
+  const created = data as ConversationRow;
+  if (referredBy) {
+    await saveConversationReferral(created.id, referredBy);
+  }
+  return conversationResult(created);
 }
 
 export async function listUserChats(userId: string) {
@@ -1094,12 +1260,13 @@ async function toThread(conversation: ConversationRow) {
     const profile = await getProfile(conversation.user_id);
     if (profile) visitorImageUrl = await resolveProfileImage(profile);
   }
+  let referredByName: string | null = null;
+  const referredById = await referredByFor(conversation);
+  if (referredById) {
+    const referrer = await getProfile(referredById);
+    referredByName = referrer?.name ?? null;
+  }
   const messages = hydrateReplies(((data ?? []) as MessageRow[]).map(messageDto));
-  const notice = retentionNotice();
-  const retention =
-    notice && messages.some((item) => messageInRetention(item.createdAt, notice))
-      ? notice
-      : null;
   return {
     conversation: {
       id: conversation.id,
@@ -1111,9 +1278,10 @@ async function toThread(conversation: ConversationRow) {
       pageReadAt: conversation.admin_read_at,
       visitorReadAt: conversation.user_read_at,
       welcome: page.welcome,
+      referredByName,
     },
     messages,
-    retention,
+    retention: retentionNotice(),
   };
 }
 
@@ -1169,16 +1337,6 @@ export async function getThreadForAdmin(conversationId: string, actor: PageActor
   const conversation = await requireConversation(conversationId);
   await assertCanManagePage(actor, conversation.page_id);
   await markPageRead(conversation);
-  return toThread(conversation);
-}
-
-export async function getThreadForVisitor(conversationId: string, token: string) {
-  await connection();
-  const conversation = await requireConversation(conversationId);
-  if (!tokensMatch(conversation.visitor_token, token)) {
-    throw new HttpError(401, "Join this page again to continue.");
-  }
-  await markVisitorRead(conversation);
   return toThread(conversation);
 }
 
@@ -1278,28 +1436,6 @@ async function appendMessage(
     deleted: parent.deleted,
   };
   return dto;
-}
-
-export async function addVisitorMessage(
-  conversationId: string,
-  token: string,
-  bodyInput: unknown,
-  image?: ImageUpload | null,
-  replyToId?: unknown,
-) {
-  await connection();
-  const body = cleanMessage(bodyInput, Boolean(image));
-  const conversation = await requireConversation(conversationId);
-  if (!tokensMatch(conversation.visitor_token, token)) {
-    throw new HttpError(401, "Join this page again to send a message.");
-  }
-  return appendMessage(
-    conversation,
-    "visitor",
-    body,
-    image,
-    readReplyToId(replyToId),
-  );
 }
 
 export async function addUserMessage(
@@ -1423,20 +1559,6 @@ async function applyMessageAction(
     return saveFields(row, fields);
   }
   throw new HttpError(400, "Choose an action.");
-}
-
-export async function actOnVisitorMessage(
-  conversationId: string,
-  token: string,
-  messageId: string,
-  action: ChatAction,
-) {
-  await connection();
-  const conversation = await requireConversation(conversationId);
-  if (!tokensMatch(conversation.visitor_token, token)) {
-    throw new HttpError(401, "Join this page again to continue.");
-  }
-  return applyMessageAction(conversation, "visitor", messageId, action);
 }
 
 export async function actOnUserMessage(

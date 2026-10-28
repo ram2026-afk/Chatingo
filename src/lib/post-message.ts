@@ -21,7 +21,6 @@ function replyPreview(message: ChatMessage): ChatReplyPreview {
 export async function postChatMessage(
   conversationId: string,
   payload: ChatSend,
-  headers?: HeadersInit,
 ) {
   if (payload.image) {
     const form = new FormData();
@@ -30,13 +29,11 @@ export async function postChatMessage(
     if (payload.replyToId) form.append("replyToId", payload.replyToId);
     return api<ChatMessage>(`/api/conversations/${conversationId}/messages`, {
       method: "POST",
-      headers,
       body: form,
     });
   }
   return api<ChatMessage>(`/api/conversations/${conversationId}/messages`, {
     method: "POST",
-    headers,
     body: JSON.stringify({
       body: payload.body,
       replyToId: payload.replyToId ?? null,
@@ -48,13 +45,11 @@ export async function patchChatMessage(
   conversationId: string,
   messageId: string,
   action: ChatAction,
-  headers?: HeadersInit,
 ) {
   return api<ChatMessage>(
     `/api/conversations/${conversationId}/messages/${messageId}`,
     {
       method: "PATCH",
-      headers,
       body: JSON.stringify(action),
     },
   );
@@ -69,7 +64,11 @@ export function pendingChatMessage(
     id: `temp-${crypto.randomUUID()}`,
     sender,
     body: payload.body,
-    imageUrl: payload.image ? URL.createObjectURL(payload.image) : null,
+    imageUrl: payload.image
+      ? sender === "page"
+        ? URL.createObjectURL(payload.image)
+        : "image-sent"
+      : null,
     replyToId: payload.replyToId ?? null,
     replyTo: parent ? replyPreview(parent) : null,
     createdAt: new Date().toISOString(),

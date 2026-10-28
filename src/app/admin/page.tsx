@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { AdminLoginForm } from "@/components/admin-login-form";
-import { Loading } from "@/components/loading";
+import { AuthFallback } from "@/components/auth-hero";
 
 export const metadata: Metadata = {
   title: "Admin",
@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 
 export default function AdminPage() {
   return (
-    <Suspense fallback={<Loading />}>
+    <Suspense fallback={<AuthFallback />}>
       <AdminLoginForm />
     </Suspense>
   );

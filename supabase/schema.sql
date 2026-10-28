@@ -32,6 +32,7 @@ create table if not exists public.conversations (
   visitor_name text not null,
   visitor_token text not null unique,
   user_id uuid references public.profiles (id) on delete set null,
+  referred_by uuid references public.profiles (id) on delete set null,
   admin_read_at timestamptz,
   user_read_at timestamptz,
   created_at timestamptz not null default now(),
@@ -59,6 +60,9 @@ create index if not exists conversations_page_updated_idx
 
 create index if not exists conversations_user_updated_idx
   on public.conversations (user_id, updated_at desc);
+
+create index if not exists conversations_referred_by_idx
+  on public.conversations (referred_by);
 
 create index if not exists messages_conversation_created_idx
   on public.messages (conversation_id, created_at);

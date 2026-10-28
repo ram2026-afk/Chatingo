@@ -14,20 +14,27 @@ import {
 } from "@/components/messenger";
 import { TopBar } from "@/components/top-bar";
 import { useChatThread } from "@/components/use-chat-thread";
+import { useOrigin } from "@/components/use-origin";
 import { api, isForbidden, isUnauthorized } from "@/lib/http";
+import { cleanReferralCode, readClientReferral } from "@/lib/referral";
 import type { JoinResult, SessionInfo, UserChatSummary } from "@/lib/types";
 
-function parsePageSlug(value: string) {
+function parsePageLink(value: string) {
   const text = value.trim();
   try {
-    const url = new URL(text);
+    const url = new URL(text, "https://chat-in-go.local");
     const parts = url.pathname.split("/").filter(Boolean);
-    if (parts[0] === "p" && parts[1]) return parts[1];
+    const ref = cleanReferralCode(url.searchParams.get("ref"));
+    if (parts[0] === "p" && parts[1]) return { slug: parts[1], ref };
+    if (/^[a-z0-9-]+$/i.test(text)) return { slug: text, ref };
   } catch {
-    if (text.startsWith("/p/")) return text.slice(3).split("/")[0] || null;
-    if (/^[a-z0-9-]+$/i.test(text)) return text;
+    if (text.startsWith("/p/")) {
+      const slug = text.slice(3).split(/[/?#]/)[0] || null;
+      return { slug, ref: "" };
+    }
+    if (/^[a-z0-9-]+$/i.test(text)) return { slug: text, ref: "" };
   }
-  return null;
+  return { slug: null as string | null, ref: "" };
 }
 
 export function UserInbox() {
@@ -41,6 +48,9 @@ export function UserInbox() {
   const [error, setError] = useState("");
   const [joining, setJoining] = useState(false);
   const [canManagePages, setCanManagePages] = useState(false);
+  const [referralCode, setReferralCode] = useState("");
+  const [copiedRef, setCopiedRef] = useState(false);
+  const origin = useOrigin();
   const listOnly = useRef(false);
   const requestedChatRef = useRef(requestedChat);
   const activeId = requestedChat || selectedId;
@@ -54,11 +64,14 @@ export function UserInbox() {
     async function load() {
       try {
         const [data, session] = await Promise.all([
-          api<{ chats: UserChatSummary[] }>("/api/me/chats"),
+          api<{ chats: UserChatSummary[]; referralCode?: string | null }>(
+            "/api/me/chats",
+          ),
           api<SessionInfo>("/api/auth/session"),
         ]);
         if (cancelled) return;
         setChats(data.chats);
+        setReferralCode(data.referralCode ?? "");
         setCanManagePages(session.canManagePages);
         setSelectedId((current) => {
           const fromUrl = requestedChatRef.current;
@@ -83,7 +96,7 @@ export function UserInbox() {
       } catch (caught) {
         if (cancelled) return;
         if (isUnauthorized(caught)) {
-          router.replace("/");
+          router.replace("/login");
           return;
         }
         if (isForbidden(caught)) {
@@ -117,7 +130,7 @@ export function UserInbox() {
     conversationId: activeId,
     sender: "visitor",
     onLiveError: (caught) => {
-      if (isUnauthorized(caught)) router.replace("/");
+      if (isUnauthorized(caught)) router.replace("/login");
       if (isForbidden(caught)) router.replace("/pages");
     },
   });
@@ -142,19 +155,31 @@ export function UserInbox() {
     router.replace(`/inbox?chat=${conversationId}`);
   }
 
+  async function copyReferral(url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedRef(true);
+      window.setTimeout(() => setCopiedRef(false), 2000);
+    } catch {
+      setError("Could not copy the referral link.");
+    }
+  }
+
   async function openLink(event: React.FormEvent) {
     event.preventDefault();
-    const slug = parsePageSlug(link);
-    if (!slug) {
+    const parsed = parsePageLink(link);
+    if (!parsed.slug) {
       setError("Paste a page link or slug, such as /p/northside-studio.");
       return;
     }
     setError("");
     setJoining(true);
     try {
-      const result = await api<JoinResult>(`/api/p/${slug}/join`, {
+      const result = await api<JoinResult>(`/api/p/${parsed.slug}/join`, {
         method: "POST",
-        body: JSON.stringify({}),
+        body: JSON.stringify({
+          ref: parsed.ref || readClientReferral() || undefined,
+        }),
       });
       setLink("");
       openConversation(result.conversationId);
@@ -171,6 +196,11 @@ export function UserInbox() {
 
   const active =
     chats?.find((chat) => chat.conversationId === activeId) ?? null;
+  const referralChat = active ?? chats?.[0] ?? null;
+  const referralUrl =
+    origin && referralCode && referralChat
+      ? `${origin}/p/${referralChat.pageSlug}?ref=${referralCode}`
+      : "";
 
   return (
     <div className="flex h-dvh flex-col bg-canvas">
@@ -178,7 +208,7 @@ export function UserInbox() {
         variant="canvas"
         leading={
           <Link href="/inbox" className="min-w-0" aria-label="Chat-in-go">
-            <Brand size="sm" />
+            <Brand size="sm" wordmark={false} />
           </Link>
         }
       >
@@ -264,6 +294,25 @@ export function UserInbox() {
                     {joining ? "Opening" : "Join"}
                   </button>
                 </form>
+                <div className="mt-2.5 rounded-2xl bg-soft p-3">
+                  <p className="text-xs font-semibold">Referral link</p>
+                  <p className="mt-1 break-all text-xs leading-5 text-muted">
+                    {referralUrl ||
+                      "Join a page, then share a referral link for that chat."}
+                  </p>
+                  <button
+                    type="button"
+                    className="btn mt-2 w-full"
+                    disabled={!referralUrl}
+                    onClick={() => void copyReferral(referralUrl)}
+                  >
+                    {copiedRef ? "Copied" : "Copy referral link"}
+                  </button>
+                  <p className="mt-2 text-[11px] leading-5 text-muted">
+                    Friends who join with this link show as referred by you on
+                    the page.
+                  </p>
+                </div>
                 {error ? (
                   <div className="mt-3">
                     <Alert>{error}</Alert>

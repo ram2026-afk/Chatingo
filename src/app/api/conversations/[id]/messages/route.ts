@@ -2,7 +2,6 @@ import { getOptionalSession } from "@/lib/auth";
 import {
   addPageMessage,
   addUserMessage,
-  addVisitorMessage,
   errorResponse,
   HttpError,
 } from "@/lib/store";
@@ -31,17 +30,6 @@ export async function POST(request: Request, context: Context) {
   try {
     const { id } = await context.params;
     const payload = await readPayload(request);
-    const visitorToken = request.headers.get("x-visitor-token");
-    if (visitorToken) {
-      const message = await addVisitorMessage(
-        id,
-        visitorToken,
-        payload.body,
-        payload.image,
-        payload.replyToId,
-      );
-      return Response.json(message, { status: 201 });
-    }
     const session = await getOptionalSession();
     if (session?.role === "admin") {
       const message = await addPageMessage(

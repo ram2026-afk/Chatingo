@@ -90,6 +90,7 @@ export type Thread = {
     pageReadAt: string | null;
     visitorReadAt: string | null;
     welcome: string;
+    referredByName: string | null;
   };
   messages: ChatMessage[];
   retention?: RetentionNotice | null;
@@ -97,9 +98,6 @@ export type Thread = {
 
 export type JoinResult = {
   conversationId: string;
-  token: string;
-  visitorName: string;
-  page: PublicPage;
 };
 
 export type SessionInfo = {

@@ -138,7 +138,7 @@ export function chatSnippet(message: {
 }) {
   if (message.deleted) return "Deleted a message";
   if (message.body) return message.body;
-  if (message.imageUrl) return "Photo";
+  if (message.imageUrl) return "Image sent";
   return "Message";
 }
 
@@ -149,6 +149,6 @@ export function messagePreview(message: {
   const parsed = decodeChatBody(message.body);
   if (parsed.deleted) return "Deleted a message";
   if (parsed.body) return parsed.body;
-  if (message.image_url || parsed.imageUrl) return "Photo";
+  if (message.image_url || parsed.imageUrl) return "Image sent";
   return message.body;
 }

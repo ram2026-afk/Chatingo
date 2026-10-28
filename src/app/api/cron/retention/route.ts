@@ -8,7 +8,7 @@ export async function GET() {
     return Response.json({
       ok: true,
       olderThan: retainedFrom().toISOString(),
-      notice: notice?.text ?? null,
+      notice: notice.text,
     });
   } catch (error) {
     return errorResponse(error);

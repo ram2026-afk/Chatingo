@@ -41,6 +41,8 @@ function InboxView({ id }: { id: string }) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [photoSaving, setPhotoSaving] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const listOnly = useRef(false);
   const photoRef = useRef<HTMLInputElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
@@ -61,13 +63,17 @@ function InboxView({ id }: { id: string }) {
 
   useEffect(() => {
     if (!settingsOpen) return;
+    function closeSettings() {
+      setSettingsOpen(false);
+      setDeleteOpen(false);
+    }
     function onPointer(event: MouseEvent) {
       if (!settingsRef.current?.contains(event.target as Node)) {
-        setSettingsOpen(false);
+        closeSettings();
       }
     }
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setSettingsOpen(false);
+      if (event.key === "Escape") closeSettings();
     }
     document.addEventListener("mousedown", onPointer);
     document.addEventListener("keydown", onKey);
@@ -102,7 +108,7 @@ function InboxView({ id }: { id: string }) {
       } catch (caught) {
         if (cancelled) return;
         if (isUnauthorized(caught)) {
-          router.replace("/");
+          router.replace("/login");
           return;
         }
         if (isForbidden(caught)) {
@@ -139,7 +145,7 @@ function InboxView({ id }: { id: string }) {
     conversationId: activeId,
     sender: "page",
     onLiveError: (caught) => {
-      if (isUnauthorized(caught)) router.replace("/");
+      if (isUnauthorized(caught)) router.replace("/login");
       if (isForbidden(caught)) router.replace("/pages");
     },
   });
@@ -197,7 +203,7 @@ function InboxView({ id }: { id: string }) {
       applyPageImage(data.page.imageUrl);
     } catch (caught) {
       if (isUnauthorized(caught)) {
-        router.replace("/");
+        router.replace("/login");
         return;
       }
       setError(
@@ -223,7 +229,7 @@ function InboxView({ id }: { id: string }) {
       applyPageImage(data.page.imageUrl);
     } catch (caught) {
       if (isUnauthorized(caught)) {
-        router.replace("/");
+        router.replace("/login");
         return;
       }
       setError(
@@ -246,16 +252,15 @@ function InboxView({ id }: { id: string }) {
 
   async function removePage() {
     if (!detail) return;
-    const confirmed = window.confirm(
-      `Delete ${detail.page.name}? Conversations on this page will be removed.`,
-    );
-    if (!confirmed) return;
+    setError("");
+    setDeleting(true);
     try {
       await api(`/api/pages/${detail.page.id}`, { method: "DELETE" });
       router.replace("/pages");
+      router.refresh();
     } catch (caught) {
       if (isUnauthorized(caught)) {
-        router.replace("/");
+        router.replace("/login");
         return;
       }
       if (isForbidden(caught)) {
@@ -265,6 +270,7 @@ function InboxView({ id }: { id: string }) {
       setError(
         caught instanceof Error ? caught.message : "Could not delete the page.",
       );
+      setDeleting(false);
     }
   }
 
@@ -328,6 +334,7 @@ function InboxView({ id }: { id: string }) {
                             setSettingsOpen((open) => !open);
                             setShareOpen(false);
                             setAccessOpen(false);
+                            setDeleteOpen(false);
                           }}
                         >
                           <svg
@@ -354,7 +361,10 @@ function InboxView({ id }: { id: string }) {
                               type="button"
                               className="settings-btn"
                               aria-label="Close"
-                              onClick={() => setSettingsOpen(false)}
+                              onClick={() => {
+                                setSettingsOpen(false);
+                                setDeleteOpen(false);
+                              }}
                             >
                               <svg
                                 viewBox="0 0 16 16"
@@ -402,6 +412,44 @@ function InboxView({ id }: { id: string }) {
                               Remove
                             </button>
                           ) : null}
+                          {deleteOpen ? (
+                            <div className="mt-3">
+                              <p className="text-sm font-semibold">
+                                Delete this page?
+                              </p>
+                              <p className="mt-1 text-xs leading-5 text-muted">
+                                {detail.page.name} and its conversations will
+                                be removed. This cannot be undone.
+                              </p>
+                              <div className="mt-3 grid grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary w-full"
+                                  disabled={deleting}
+                                  onClick={() => setDeleteOpen(false)}
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-danger w-full"
+                                  disabled={deleting}
+                                  onClick={() => void removePage()}
+                                >
+                                  {deleting ? "Deleting" : "Delete"}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn btn-danger mt-3 w-full"
+                              disabled={photoSaving}
+                              onClick={() => setDeleteOpen(true)}
+                            >
+                              Delete page
+                            </button>
+                          )}
                           <div className="mt-2">
                             <Alert>{error}</Alert>
                           </div>
@@ -457,6 +505,7 @@ function InboxView({ id }: { id: string }) {
                     setShareOpen((open) => !open);
                     setAccessOpen(false);
                     setSettingsOpen(false);
+                    setDeleteOpen(false);
                   }}
                 >
                   {shareOpen ? "Hide share" : "Share page"}
@@ -469,6 +518,7 @@ function InboxView({ id }: { id: string }) {
                       setAccessOpen((open) => !open);
                       setShareOpen(false);
                       setSettingsOpen(false);
+                      setDeleteOpen(false);
                     }}
                   >
                     {accessOpen ? "Hide access" : "Access"}
@@ -508,15 +558,6 @@ function InboxView({ id }: { id: string }) {
                       />
                     ) : null}
                   </div>
-                  {isAdmin ? (
-                    <button
-                      type="button"
-                      className="btn btn-text mt-2 w-full"
-                      onClick={() => void removePage()}
-                    >
-                      Delete page
-                    </button>
-                  ) : null}
                 </div>
               ) : null}
               {isAdmin && accessOpen ? (
@@ -581,6 +622,7 @@ function InboxView({ id }: { id: string }) {
                 visitorReadAt={thread.conversation.visitorReadAt}
                 empty="No messages yet. Reply when they write in."
                 retention={thread.retention}
+                referredBy={thread.conversation.referredByName}
                 onReply={setReplyTo}
                 onAct={act}
               />

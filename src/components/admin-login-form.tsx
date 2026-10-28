@@ -1,9 +1,13 @@
 "use client";
 
+import Image from "next/image";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Brand } from "@/components/brand";
+import logo from "@/assets/Chatingo.png";
+import { HeroShell } from "@/components/hero-shell";
 import { Alert } from "@/components/loading";
+import { loginPath } from "@/lib/auth-redirect";
 import { api } from "@/lib/http";
 import type { SessionInfo } from "@/lib/types";
 
@@ -15,7 +19,6 @@ export function AdminLoginForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,9 +33,7 @@ export function AdminLoginForm() {
         }
         router.replace(session.role === "user" ? "/inbox" : "/pages");
       })
-      .catch(() => {
-        if (!cancelled) setReady(true);
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -57,25 +58,34 @@ export function AdminLoginForm() {
     }
   }
 
-  if (!ready) {
-    return (
-      <div className="flex min-h-dvh items-center justify-center">
-        <p className="text-sm text-muted">Loading</p>
-      </div>
-    );
-  }
-
   return (
-    <main className="flex min-h-dvh items-center justify-center overflow-y-auto px-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] py-6 sm:px-4 sm:py-10">
-      <div className="card w-full min-w-0 max-w-[440px] p-5 sm:p-9">
-        <Brand />
-        <h1 className="mt-6 text-[26px] font-semibold leading-tight tracking-tight sm:mt-7 sm:text-[30px]">
+    <HeroShell className="grid grid-cols-1 items-start gap-8 px-6 py-8 sm:px-10 md:px-16 lg:grid-cols-2 lg:items-center lg:gap-12">
+      <Link
+        href="/"
+        className="flex items-center justify-center"
+        aria-label="Chat-in-go home"
+      >
+        <Image
+          src={logo}
+          alt="Chat-in-go"
+          width={logo.width}
+          height={logo.height}
+          priority
+          sizes="(min-width: 1024px) 40vw, 60vw"
+          className="h-auto w-[min(100%,220px)] sm:w-[min(100%,280px)] lg:w-full lg:max-w-md"
+        />
+      </Link>
+      <div className="mx-auto w-full min-w-0 max-w-md lg:mx-0 lg:justify-self-center">
+        <h1 className="text-[26px] font-semibold leading-tight tracking-tight">
           Admin sign in
         </h1>
         <p className="mt-2 text-sm leading-6 text-muted">
           This page is only for the account owner.
         </p>
-        <form className="mt-6 flex flex-col gap-4" onSubmit={(event) => void onSubmit(event)}>
+        <form
+          className="mt-6 flex flex-col gap-4"
+          onSubmit={(event) => void onSubmit(event)}
+        >
           <div>
             <label className="label" htmlFor="admin-email">
               Email
@@ -109,7 +119,13 @@ export function AdminLoginForm() {
             {submitting ? "Signing in" : "Sign in"}
           </button>
         </form>
+        <p className="mt-5 text-center text-sm leading-6 text-muted">
+          Not the owner?{" "}
+          <Link href={loginPath()} className="font-semibold text-ink">
+            Sign in
+          </Link>
+        </p>
       </div>
-    </main>
+    </HeroShell>
   );
 }

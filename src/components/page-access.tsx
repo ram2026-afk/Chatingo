@@ -28,7 +28,7 @@ export function PageAccessPanel({ pageId }: { pageId: string }) {
       } catch (caught) {
         if (cancelled) return;
         if (isUnauthorized(caught)) {
-          router.replace("/");
+          router.replace("/login");
           return;
         }
         setError(caught instanceof Error ? caught.message : "Could not load access.");
@@ -57,7 +57,7 @@ export function PageAccessPanel({ pageId }: { pageId: string }) {
       setEmail("");
     } catch (caught) {
       if (isUnauthorized(caught)) {
-        router.replace("/");
+        router.replace("/login");
         return;
       }
       setError(caught instanceof Error ? caught.message : "Could not give access.");
@@ -73,7 +73,7 @@ export function PageAccessPanel({ pageId }: { pageId: string }) {
       setStaff((current) => (current ?? []).filter((item) => item.id !== id));
     } catch (caught) {
       if (isUnauthorized(caught)) {
-        router.replace("/");
+        router.replace("/login");
         return;
       }
       setError(caught instanceof Error ? caught.message : "Could not remove access.");

@@ -4,7 +4,6 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { PageAvatar } from "@/components/brand";
 import { REACT_EMOJIS, chatSnippet } from "@/lib/chat-media";
 import { compressImage } from "@/lib/compress-image";
-import { messageInRetention } from "@/lib/retention";
 import type {
   ChatAction,
   ChatActor,
@@ -62,6 +61,33 @@ function senderLabel(
   return sender === "page" ? pageName : visitorName;
 }
 
+function ImageSentMark() {
+  return (
+    <span className="image-sent">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect
+          x="3.5"
+          y="5.5"
+          width="17"
+          height="13"
+          rx="2.5"
+          stroke="currentColor"
+          strokeWidth="1.8"
+        />
+        <path
+          d="M3.8 16.2 8 12.2l3.2 3 4.1-5 5 6"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <circle cx="9" cy="9" r="1.2" fill="currentColor" />
+      </svg>
+      Image sent
+    </span>
+  );
+}
+
 export function MessageList({
   messages,
   viewer,
@@ -73,6 +99,7 @@ export function MessageList({
   visitorReadAt,
   empty,
   retention,
+  referredBy,
   onReply,
   onAct,
 }: {
@@ -86,6 +113,7 @@ export function MessageList({
   visitorReadAt?: string | null;
   empty: string;
   retention?: RetentionNotice | null;
+  referredBy?: string | null;
   onReply?: (message: ChatMessage) => void;
   onAct?: (message: ChatMessage, action: ChatAction) => Promise<void> | void;
 }) {
@@ -158,17 +186,22 @@ export function MessageList({
         aria-live="polite"
         aria-relevant="additions"
       >
+        {viewer === "page" && referredBy ? (
+          <p className="referral-banner" role="status">
+            Referred by {referredBy}
+          </p>
+        ) : null}
+        {retention ? (
+          <p className="retention-notice" role="status">
+            {retention.text}
+          </p>
+        ) : null}
         {messages.length === 0 ? (
           <p className="m-auto max-w-xs text-center text-sm text-muted">
             {empty}
           </p>
         ) : (
           <div className="mx-auto mt-auto flex w-full max-w-3xl flex-col pb-2">
-            {retention ? (
-              <p className="retention-notice" role="status">
-                {retention.text}
-              </p>
-            ) : null}
             {pinned ? (
               <button
                 type="button"
@@ -199,11 +232,6 @@ export function MessageList({
               const dayLabel = newDay
                 ? formatDayLabel(message.createdAt)
                 : "";
-              const removalPreview =
-                retention != null &&
-                messageInRetention(message.createdAt, retention) &&
-                (!previous ||
-                  !messageInRetention(previous.createdAt, retention));
               const senderName =
                 message.sender === "page" ? pageName : visitorName;
               const senderImage =
@@ -219,16 +247,19 @@ export function MessageList({
                 <span className="avatar-xs invisible" aria-hidden="true" />
               );
               const reactions = message.reactions ?? [];
+              const showPhoto =
+                Boolean(message.imageUrl) &&
+                !message.deleted &&
+                viewer === "page";
+              const showImageSent =
+                Boolean(message.imageUrl) &&
+                !message.deleted &&
+                viewer !== "page";
               return (
                 <Fragment key={message.id}>
                   {dayLabel ? (
                     <p className="day-divider" role="separator">
                       {dayLabel}
-                    </p>
-                  ) : null}
-                  {removalPreview ? (
-                    <p className="retention-mark" role="note">
-                      These messages will be deleted
                     </p>
                   ) : null}
                   <div
@@ -260,9 +291,7 @@ export function MessageList({
                         className={`text-[15px] leading-6 ${
                           mine ? "bubble-own" : "bubble-other"
                         } ${
-                          message.imageUrl && !message.deleted
-                            ? "bubble-media"
-                            : "px-3.5 py-2"
+                          showPhoto ? "bubble-media" : "px-3.5 py-2"
                         } ${
                           mine
                             ? lastInGroup
@@ -328,17 +357,18 @@ export function MessageList({
                           </p>
                         ) : (
                           <>
-                            {message.imageUrl ? (
+                            {showPhoto ? (
                               <img
                                 src={message.imageUrl}
                                 alt={message.body || "Photo"}
                                 className="chat-image"
                               />
                             ) : null}
+                            {showImageSent ? <ImageSentMark /> : null}
                             {message.body ? (
                               <p
                                 className={`whitespace-pre-wrap break-words ${
-                                  message.imageUrl ? "chat-caption" : ""
+                                  showPhoto ? "chat-caption" : ""
                                 }`}
                               >
                                 {message.body}

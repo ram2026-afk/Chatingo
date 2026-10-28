@@ -1,10 +1,10 @@
 import { Suspense } from "react";
+import { AuthFallback } from "@/components/auth-hero";
 import { JoinChat } from "@/components/join-chat";
-import { Loading } from "@/components/loading";
 
 export default function PublicPage() {
   return (
-    <Suspense fallback={<Loading label="Opening page" />}>
+    <Suspense fallback={<AuthFallback />}>
       <JoinChat />
     </Suspense>
   );

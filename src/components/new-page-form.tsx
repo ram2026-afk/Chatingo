@@ -29,7 +29,7 @@ export function NewPageForm() {
       })
       .catch((caught) => {
         if (cancelled) return;
-        if (isUnauthorized(caught)) router.replace("/");
+        if (isUnauthorized(caught)) router.replace("/login");
         else router.replace("/pages");
       });
     return () => {
@@ -84,7 +84,7 @@ export function NewPageForm() {
       router.replace(`/pages/${data.page.id}`);
     } catch (caught) {
       if (isUnauthorized(caught)) {
-        router.replace("/");
+        router.replace("/login");
         return;
       }
       if (isForbidden(caught)) {

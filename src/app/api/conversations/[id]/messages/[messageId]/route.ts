@@ -2,7 +2,6 @@ import { getOptionalSession } from "@/lib/auth";
 import {
   actOnPageMessage,
   actOnUserMessage,
-  actOnVisitorMessage,
   errorResponse,
   HttpError,
 } from "@/lib/store";
@@ -25,16 +24,6 @@ export async function PATCH(request: Request, context: Context) {
   try {
     const { id, messageId } = await context.params;
     const action = readAction(await request.json().catch(() => null));
-    const visitorToken = request.headers.get("x-visitor-token");
-    if (visitorToken) {
-      const message = await actOnVisitorMessage(
-        id,
-        visitorToken,
-        messageId,
-        action,
-      );
-      return Response.json(message);
-    }
     const session = await getOptionalSession();
     if (session?.role === "admin") {
       const message = await actOnPageMessage(

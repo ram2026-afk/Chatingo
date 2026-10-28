@@ -1,49 +1,34 @@
 "use client";
 
+import Image from "next/image";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Brand } from "@/components/brand";
+import logo from "@/assets/Chatingo.png";
+import { HeroShell } from "@/components/hero-shell";
 import { Alert } from "@/components/loading";
-import { AUTH_NEXT_KEY, safeNext } from "@/lib/auth-redirect";
+import { forgotPath, loginPath, safeNext } from "@/lib/auth-redirect";
 import { LIMITS } from "@/lib/constants";
 import { api } from "@/lib/http";
-import { supabaseBrowser } from "@/lib/supabase-browser";
 import type { SessionInfo } from "@/lib/types";
-
-function GoogleMark() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        fill="#4285F4"
-        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-      />
-      <path
-        fill="#34A853"
-        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-      />
-      <path
-        fill="#EA4335"
-        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-      />
-    </svg>
-  );
-}
 
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedNext = searchParams.get("next");
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
-  const [name, setName] = useState("");
+  const requestedMode =
+    searchParams.get("mode") === "signup" ? "signup" : "signin";
+  const [mode, setMode] = useState<"signin" | "signup">(requestedMode);
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(searchParams.get("error") ?? "");
   const [submitting, setSubmitting] = useState(false);
-  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    setMode(requestedMode);
+  }, [requestedMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,13 +36,17 @@ export function LoginForm() {
       .then((session) => {
         if (!cancelled) router.replace(safeNext(session.role, requestedNext));
       })
-      .catch(() => {
-        if (!cancelled) setReady(true);
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [requestedNext, router]);
+
+  function switchMode(nextMode: "signin" | "signup") {
+    setMode(nextMode);
+    setError("");
+    router.replace(loginPath({ next: requestedNext, mode: nextMode }));
+  }
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -69,7 +58,9 @@ export function LoginForm() {
         {
           method: "POST",
           body: JSON.stringify(
-            mode === "signup" ? { name, email, password } : { email, password },
+            mode === "signup"
+              ? { firstName, lastName, email, password }
+              : { email, password },
           ),
         },
       );
@@ -81,105 +72,80 @@ export function LoginForm() {
     }
   }
 
-  async function onGoogle() {
-    setError("");
-    setSubmitting(true);
-    try {
-      if (requestedNext) sessionStorage.setItem(AUTH_NEXT_KEY, requestedNext);
-      else sessionStorage.removeItem(AUTH_NEXT_KEY);
-      const supabase = supabaseBrowser();
-      const { error: oauthError } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
-          queryParams: { prompt: "select_account" },
-        },
-      });
-      if (oauthError) throw oauthError;
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "";
-      setError(
-        /not enabled|unsupported provider/i.test(message)
-          ? "Google sign-in is not enabled yet."
-          : message && message.length < 80
-            ? message
-            : "Could not start Google sign-in.",
-      );
-      setSubmitting(false);
-    }
-  }
-
-  if (!ready) {
-    return (
-      <div className="flex min-h-dvh items-center justify-center">
-        <p className="text-sm text-muted">Loading</p>
-      </div>
-    );
-  }
-
   return (
-    <main className="flex min-h-dvh items-center justify-center overflow-y-auto px-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] py-6 sm:px-4 sm:py-10">
-      <div className="card w-full min-w-0 max-w-[440px] p-5 sm:p-9">
-        <Brand />
-        <h1 className="mt-6 text-[26px] font-semibold leading-tight tracking-tight sm:mt-7 sm:text-[30px]">
+    <HeroShell className="grid grid-cols-1 items-start gap-8 px-6 py-8 sm:px-10 md:px-16 lg:grid-cols-2 lg:items-center lg:gap-12">
+      <Link
+        href="/"
+        className="flex items-center justify-center"
+        aria-label="Chat-in-go home"
+      >
+        <Image
+          src={logo}
+          alt="Chat-in-go"
+          width={logo.width}
+          height={logo.height}
+          priority
+          sizes="(min-width: 1024px) 40vw, 60vw"
+          className="h-auto w-[min(100%,220px)] sm:w-[min(100%,280px)] lg:w-full lg:max-w-md"
+        />
+      </Link>
+      <div className="mx-auto w-full min-w-0 max-w-md lg:mx-0 lg:justify-self-center">
+        <h1 className="text-[26px] font-semibold leading-tight tracking-tight">
           {mode === "signup" ? "Create an account" : "Sign in"}
         </h1>
         <p className="mt-2 text-sm leading-6 text-muted">
-          Join a page from its link or QR code, or sign in to keep your chats.
-          You can also message a page without an account.
+          Use your email to keep your chats and open them again later.
         </p>
-        <div className="role-switch role-switch-2 mt-6">
+        <div className="role-switch role-switch-2 mt-5">
           <button
             type="button"
             aria-pressed={mode === "signin"}
-            onClick={() => {
-              setMode("signin");
-              setError("");
-            }}
+            onClick={() => switchMode("signin")}
           >
             Sign in
           </button>
           <button
             type="button"
             aria-pressed={mode === "signup"}
-            onClick={() => {
-              setMode("signup");
-              setError("");
-            }}
+            onClick={() => switchMode("signup")}
           >
             Sign up
           </button>
         </div>
-        <button
-          className="btn btn-google mt-6 w-full"
-          type="button"
-          disabled={submitting}
-          style={{
-            background: "#ffffff",
-            borderColor: "#d6d6d6",
-            color: "#111111",
-          }}
-          onClick={() => void onGoogle()}
+        <form
+          className="mt-6 flex flex-col gap-4"
+          onSubmit={(event) => void onSubmit(event)}
         >
-          <GoogleMark />
-          Continue with Google
-        </button>
-        <p className="auth-split">or</p>
-        <form className="flex flex-col gap-4" onSubmit={(event) => void onSubmit(event)}>
           {mode === "signup" ? (
-            <div>
-              <label className="label" htmlFor="name">
-                Name
-              </label>
-              <input
-                id="name"
-                className="field"
-                value={name}
-                maxLength={LIMITS.staffName}
-                autoComplete="name"
-                onChange={(event) => setName(event.target.value)}
-                required
-              />
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="label" htmlFor="first-name">
+                  First name
+                </label>
+                <input
+                  id="first-name"
+                  className="field"
+                  value={firstName}
+                  maxLength={LIMITS.givenName}
+                  autoComplete="given-name"
+                  onChange={(event) => setFirstName(event.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="label" htmlFor="last-name">
+                  Last name
+                </label>
+                <input
+                  id="last-name"
+                  className="field"
+                  value={lastName}
+                  maxLength={LIMITS.givenName}
+                  autoComplete="family-name"
+                  onChange={(event) => setLastName(event.target.value)}
+                  required
+                />
+              </div>
             </div>
           ) : null}
           <div>
@@ -204,12 +170,28 @@ export function LoginForm() {
               id="password"
               className="field"
               type="password"
-              autoComplete={mode === "signup" ? "new-password" : "current-password"}
+              autoComplete={
+                mode === "signup" ? "new-password" : "current-password"
+              }
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               minLength={6}
               required
             />
+            {mode === "signup" ? (
+              <p className="mt-1.5 text-xs text-muted">
+                Use at least 6 characters.
+              </p>
+            ) : (
+              <p className="mt-1.5 text-right text-xs">
+                <Link
+                  href={forgotPath({ next: requestedNext })}
+                  className="font-semibold text-ink"
+                >
+                  Forgot password?
+                </Link>
+              </p>
+            )}
           </div>
           <Alert>{error}</Alert>
           <button className="btn w-full" type="submit" disabled={submitting}>
@@ -222,7 +204,35 @@ export function LoginForm() {
                 : "Sign in"}
           </button>
         </form>
+        <p className="mt-5 text-center text-sm leading-6 text-muted">
+          {mode === "signup" ? (
+            <>
+              Already have an account?{" "}
+              <Link
+                href={loginPath({ next: requestedNext })}
+                className="font-semibold text-ink"
+              >
+                Sign in
+              </Link>
+            </>
+          ) : (
+            <>
+              New here?{" "}
+              <Link
+                href={loginPath({ next: requestedNext, mode: "signup" })}
+                className="font-semibold text-ink"
+              >
+                Create an account
+              </Link>
+            </>
+          )}
+        </p>
+        <div className="mt-3 flex justify-center">
+          <Link href="/privacy" className="btn btn-sm btn-text">
+            Privacy
+          </Link>
+        </div>
       </div>
-    </main>
+    </HeroShell>
   );
 }

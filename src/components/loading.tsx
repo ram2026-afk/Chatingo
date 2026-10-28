@@ -7,10 +7,11 @@ export function Loading({
 }) {
   return (
     <div
-      className={`flex items-center justify-center px-4 ${compact ? "min-h-0 flex-1" : "min-h-dvh"}`}
-    >
-      <p className="text-sm text-muted">{label}</p>
-    </div>
+      className={`bg-canvas ${compact ? "min-h-0 flex-1" : "h-dvh"}`}
+      role="status"
+      aria-live="polite"
+      aria-label={label}
+    />
   );
 }
 

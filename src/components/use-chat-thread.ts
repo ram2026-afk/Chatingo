@@ -16,14 +16,10 @@ import type { ChatAction, ChatMessage, ChatSend, Thread } from "@/lib/types";
 export function useChatThread({
   conversationId,
   sender,
-  headers,
-  enabled = true,
   onLiveError,
 }: {
   conversationId?: string;
   sender: ChatMessage["sender"];
-  headers?: HeadersInit;
-  enabled?: boolean;
   onLiveError?: (error: unknown) => void;
 }) {
   const [thread, setThread] = useState<Thread | null>(null);
@@ -42,8 +38,6 @@ export function useChatThread({
 
   useLiveThread({
     conversationId,
-    enabled: Boolean(conversationId) && enabled,
-    headers,
     onThread: (next) => setThread((current) => mergeLiveThread(current, next)),
     onError: onLiveError,
   });
@@ -60,7 +54,7 @@ export function useChatThread({
       );
       setReplyTo(null);
       try {
-        const saved = await postChatMessage(conversationId, payload, headers);
+        const saved = await postChatMessage(conversationId, payload);
         setThread((current) =>
           mapThreadMessages(current, (messages) =>
             settlePendingMessage(messages, pending.id, saved),
@@ -75,7 +69,7 @@ export function useChatThread({
         throw caught;
       }
     },
-    [conversationId, headers, sender, thread],
+    [conversationId, sender, thread],
   );
 
   const act = useCallback(
@@ -89,12 +83,7 @@ export function useChatThread({
       );
       if (action.remove && replyTo?.id === message.id) setReplyTo(null);
       try {
-        const saved = await patchChatMessage(
-          conversationId,
-          message.id,
-          action,
-          headers,
-        );
+        const saved = await patchChatMessage(conversationId, message.id, action);
         setThread((current) =>
           mapThreadMessages(current, (messages) =>
             mergeSavedMessage(messages, saved),
@@ -108,7 +97,7 @@ export function useChatThread({
         );
       }
     },
-    [conversationId, headers, replyTo, sender],
+    [conversationId, replyTo, sender],
   );
 
   return {
