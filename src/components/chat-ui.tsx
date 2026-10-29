@@ -357,7 +357,7 @@ export function MessageList({
                           </p>
                         ) : (
                           <>
-                            {showPhoto ? (
+                            {showPhoto && message.imageUrl ? (
                               <img
                                 src={message.imageUrl}
                                 alt={message.body || "Photo"}
